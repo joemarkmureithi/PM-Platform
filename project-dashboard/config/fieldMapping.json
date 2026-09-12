@@ -1,0 +1,18 @@
+{
+  "_comment": "Mapped to the REAL custom field names found in the Biomass > Active list (via ClickUp API discovery on 2026-08-21). Only 'projectHealth' does not exist yet — see README for the one field to add. Edit the right-hand values if your field names differ. 'assignee' -> 'Assigned To (Multi)' confirmed live via /api/portfolio debug output (2026-09-11): it's a ClickUp 'labels' custom field (a fixed list of person-named options), not a 'users'/People field -- see the comment on customFieldAssignees() in netlify/functions/lib/transform.js for how that's resolved. 'assigneeTextFallback' -> 'Assigned to' was discovered live (2026-09-11) via the Diagnostics panel's full custom-fields dump: on tasks where 'Assigned To (Multi)' is empty, PMs have sometimes typed the owner's name directly into this separate free-text field instead (and it's also confirmed to be the field ClickUp's Roadmap view was actually showing for those tasks). Only used as a fallback when the structured Labels field has nothing -- see textFieldAssignees() in transform.js.",
+  "currentGate": "Stage Gate",
+  "gatePhase": "Gate Phase",
+  "progress": "Progress",
+  "product": "Product",
+  "productCategory": "Product Category",
+  "businessUnit": "Business Unit",
+  "riskStatus": "Risk Status",
+  "riskScore": "Risk Score",
+  "probability": "Probability",
+  "impact": "💣 Impact",
+  "mitigationStrategy": "Mitigation Strategy",
+  "projectHealth": "Project Health",
+  "tooling": "Tooling",
+  "assignee": "Assigned To (Multi)",
+  "assigneeTextFallback": "Assigned to"
+}

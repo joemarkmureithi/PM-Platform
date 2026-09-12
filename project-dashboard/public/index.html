@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ecoa — Biomass Portfolio Intelligence</title>
+  <link rel="icon" href="assets/ecoa-logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="bg-blobs" aria-hidden="true"><span></span><span></span><span></span></div>
+
+  <div class="splash" id="splash">
+    <div class="splash-inner">
+      <img src="assets/ecoa-logo.png" alt="ecoa — stoves for life" class="splash-logo" />
+      <svg class="splash-spinner" viewBox="0 0 56 56" width="54" height="54" aria-hidden="true">
+        <circle cx="28" cy="28" r="23" fill="none" stroke="rgba(21,23,28,.08)" stroke-width="4"></circle>
+        <circle cx="28" cy="28" r="23" fill="none" stroke="var(--brand-accent)" stroke-width="4" stroke-linecap="round" stroke-dasharray="46 200"></circle>
+      </svg>
+      <div class="splash-tagline">BIOMASS PORTFOLIO INTELLIGENCE</div>
+      <div class="splash-bar-track"><div class="splash-bar-fill" id="splash-bar-fill"></div></div>
+    </div>
+  </div>
+
+  <header class="app-header">
+    <div class="brand-block">
+      <img src="assets/ecoa-logo.png" alt="ecoa — stoves for life" class="brand-logo" />
+      <span class="brand-divider" aria-hidden="true"></span>
+      <div class="brand-row">
+        <span class="brand-name">Biomass Portfolio Intelligence</span>
+      </div>
+    </div>
+    <div class="header-actions">
+      <span id="source-badge" class="badge">loading…</span>
+      <span id="updated-at" class="meta-text"></span>
+      <button id="refresh-btn" type="button" class="action-btn action-btn-icon">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
+        Refresh
+      </button>
+      <button id="theme-toggle" type="button" class="action-btn action-btn-icon">
+        <svg id="theme-toggle-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 8.2 8.2 0 1 0 20 14.5z"/></svg>
+        <span id="theme-toggle-label">Dark mode</span>
+      </button>
+    </div>
+  </header>
+
+  <nav class="tab-bar" id="tab-bar">
+    <button class="tab active" data-tab="overview"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg><span>Overview</span></button>
+    <button class="tab" data-tab="projects"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg><span>Projects</span> <span class="tab-badge" id="tab-count-projects">0</span></button>
+    <button class="tab" data-tab="weekly"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18v16H3zM8 3v4M16 3v4M3 10h18"/></svg><span>Weekly Activity</span></button>
+    <button class="tab" data-tab="resourcing"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 3a4 4 0 1 1 0 8 4 4 0 0 1 0-8M22 21v-2a4 4 0 0 0-3-3.8"/></svg><span>Resources</span></button>
+    <button class="tab" data-tab="by-category"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5zM3 14l9 5 9-5"/></svg><span>Category</span></button>
+    <button class="tab" data-tab="by-gate"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V4M4 5h13l-2 3 2 3H4"/></svg><span>Stage Gate</span></button>
+    <button class="tab" data-tab="decisions"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 9v5M12 17h.01"/></svg><span>Decisions &amp; Gaps</span> <span class="tab-badge warn" id="tab-count-decisions">0</span></button>
+    <button class="tab" data-tab="risks"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6z"/></svg><span>Risks &amp; Issues</span> <span class="tab-badge warn" id="tab-count-risks">0</span></button>
+    <button class="tab" data-tab="gantt"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h9M4 12h14M4 18h6"/></svg><span>Gantt</span></button>
+    <button class="tab" data-tab="tooling"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3a5 5 0 0 0-4 8l-7 7 2 2 7-7a5 5 0 0 0 8-4l-3 3-3-3z"/></svg><span>Tooling</span> <span class="tab-badge" id="tab-count-tooling">0</span></button>
+    <button class="tab" data-tab="lab"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6L5 20h14l-5-11V3"/></svg><span>Lab</span> <span class="tab-badge" id="tab-count-lab">0</span></button>
+    <button class="tab" data-tab="checklists"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l3 3 5-6M4 14l3 3 5-6M14 8h6M14 18h6"/></svg><span>Checklists</span></button>
+    <button class="tab" data-tab="idea"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3 11v3h6v-3a6 6 0 0 0-3-11z"/></svg><span>Idea Dumps</span></button>
+  </nav>
+
+  <div class="context-bar">
+    <div class="context-group">
+      <span class="context-label">VIEWING</span>
+      <select id="viewing-select" aria-label="Viewing product">
+        <option value="">All Products</option>
+      </select>
+      <span class="context-hint" id="viewing-hint"></span>
+    </div>
+    <div class="context-group">
+      <span class="context-label">DUE WITHIN</span>
+      <div class="period-pills" id="period-pills">
+        <button class="pill active" data-days="0">All time</button>
+        <button class="pill" data-days="30">30 days</button>
+        <button class="pill" data-days="90">90 days</button>
+        <button class="pill" data-days="-1">Overdue</button>
+      </div>
+    </div>
+  </div>
+
+  <main>
+    <section id="tab-panel-overview" class="tab-panel">
+      <div id="project-detail-card" hidden></div>
+      <div class="kpi-row" id="kpi-row"></div>
+
+      <section class="panel" id="portfolio-mix-panel">
+        <div class="panel-header">
+          <h2>Portfolio Mix</h2>
+          <p>Health distribution and where projects sit in the stage-gate pipeline.</p>
+        </div>
+        <div class="chart-row">
+          <div class="chart-block">
+            <div class="chart-title">By health</div>
+            <div class="donut-wrap" id="health-donut"></div>
+            <ul class="chart-legend" id="health-legend"></ul>
+          </div>
+          <div class="chart-block chart-block-wide">
+            <div class="chart-title">By stage gate</div>
+            <div class="bar-chart" id="gate-bar-chart"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Timeline</h2>
+          <p>Where today sits against the portfolio's near-term gates.</p>
+        </div>
+        <div class="timeline-track" id="timeline-track">
+          <div class="timeline-fill" id="timeline-fill"></div>
+        </div>
+        <div class="timeline-labels" id="timeline-labels"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Upcoming Gates</h2>
+          <p>Every project's next stage gate, soonest first.</p>
+        </div>
+        <ul class="gate-list" id="gate-list"></ul>
+      </section>
+    </section>
+
+    <section id="tab-panel-weekly" class="tab-panel" hidden>
+      <section class="panel">
+        <div class="panel-header panel-header-row">
+          <div>
+            <h2>Weekly Activity</h2>
+            <p>Every active project right now, with only the ClickUp subtasks actually starting or due this Monday-Sunday (per their own Start/Due dates — the same fields the Roadmap and Gantt views read) as updates, shown as a work-breakdown-structure tree (parent → child → grandchild) wherever a project's tasks actually nest that way in ClickUp. Filter by activity status below. This is a live snapshot for the current week, not yet a week-over-week diff — that needs a snapshot history and is a planned follow-up.</p>
+          </div>
+          <div class="toolbar-controls">
+            <span class="calendar-month-label" id="weekly-week-label"></span>
+            <span class="weekly-total" id="weekly-total"></span>
+            <button type="button" id="weekly-summary-btn" class="action-btn" title="Download this week's activity, open risks, and decisions/gaps as one styled HTML page">Download summary (HTML)</button>
+            <button type="button" id="weekly-slides-btn" class="action-btn" title="Build the same standup picture as a PowerPoint deck, ready to screen-share">Download slides (.pptx)</button>
+            <button type="button" id="weekly-refresh-btn" class="action-btn">Refresh</button>
+          </div>
+        </div>
+        <div class="weekly-status-filters" id="weekly-status-filters"></div>
+      </section>
+      <div class="weekly-list" id="weekly-list"></div>
+      <div class="empty-state" id="weekly-empty" hidden>No active projects.</div>
+    </section>
+
+    <section id="tab-panel-projects" class="tab-panel" hidden>
+      <section class="panel">
+        <div class="panel-header panel-header-row">
+          <div>
+            <h2>Project Register</h2>
+            <p>Every project being tracked, verified against ClickUp on every load. Filter any column below — combine as many as you like.</p>
+          </div>
+          <div class="toolbar-controls">
+            <input id="project-search" type="search" placeholder="Search projects…" aria-label="Search projects" />
+            <button id="clear-filter" type="button" class="chip-clear" hidden>Clear health filter ✕</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="projects-table">
+            <thead>
+              <tr class="group-row">
+                <th colspan="2">Identification</th>
+                <th>Ownership</th>
+                <th colspan="3">Status &amp; Health</th>
+                <th>Progress</th>
+                <th>Schedule</th>
+              </tr>
+              <tr class="label-row">
+                <th data-sort="name">Project</th>
+                <th data-sort="productCategory">Category</th>
+                <th data-sort="owners">Owner</th>
+                <th data-sort="currentGate">Stage Gate</th>
+                <th data-sort="healthBucket">Health</th>
+                <th data-sort="riskReason">Risk</th>
+                <th data-sort="progressPercent">Progress</th>
+                <th data-sort="targetGateDate">Due</th>
+              </tr>
+              <tr class="filter-row">
+                <th></th>
+                <th>
+                  <select id="product-category-filter" aria-label="Filter by category">
+                    <option value="">All</option>
+                  </select>
+                </th>
+                <th>
+                  <select id="owner-filter" aria-label="Filter by owner">
+                    <option value="">All</option>
+                    <option value="__unassigned__">Unassigned</option>
+                  </select>
+                </th>
+                <th>
+                  <select id="gate-filter" aria-label="Filter by stage gate">
+                    <option value="">All</option>
+                  </select>
+                </th>
+                <th>
+                  <select id="health-filter-select" aria-label="Filter by health">
+                    <option value="">All</option>
+                    <option value="active">Active</option>
+                    <option value="delayed">Delayed</option>
+                    <option value="atRisk">At Risk</option>
+                    <option value="completed">Completed</option>
+                  </select>
+                </th>
+                <th>
+                  <select id="risk-filter-select" aria-label="Filter by risk">
+                    <option value="">All</option>
+                    <option value="atrisk">Needs intervention</option>
+                  </select>
+                </th>
+                <th></th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="projects-tbody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="projects-empty" hidden>No projects match this filter.</div>
+      </section>
+    </section>
+
+    <section id="tab-panel-by-category" class="tab-panel" hidden>
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Projects by Category</h2>
+          <p>Every tracked project grouped by Product Category — respects the VIEWING and DUE WITHIN context above.</p>
+        </div>
+        <div class="kanban-board" id="board-by-category"></div>
+        <div class="empty-state" id="by-category-empty" hidden>No projects match the current context.</div>
+      </section>
+    </section>
+
+    <section id="tab-panel-by-gate" class="tab-panel" hidden>
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Projects by Stage Gate</h2>
+          <p>Where every tracked project sits in the stage-gate pipeline right now.</p>
+        </div>
+        <div class="kanban-board" id="board-by-gate"></div>
+        <div class="empty-state" id="by-gate-empty" hidden>No projects match the current context.</div>
+      </section>
+    </section>
+
+    <section id="tab-panel-decisions" class="tab-panel" hidden>
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Decisions &amp; Data Gaps</h2>
+          <p>Planning gaps worth a PM's attention — missing gates, dates, categories, or risk mitigation.</p>
+        </div>
+        <div class="gap-summary" id="gap-summary"></div>
+        <ul class="decisions-list" id="decisions-list"></ul>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header panel-header-row">
+          <div>
+            <h2>Calendar</h2>
+            <p>Every project with a target/due date, plotted on the month it falls in. Follows the VIEWING selector above; ignores the DUE WITHIN pills since browsing by month is the point.</p>
+          </div>
+          <div class="toolbar-controls calendar-nav">
+            <button type="button" id="calendar-prev" class="action-btn" aria-label="Previous month">‹ Prev</button>
+            <span id="calendar-month-label" class="calendar-month-label"></span>
+            <button type="button" id="calendar-next" class="action-btn" aria-label="Next month">Next ›</button>
+            <button type="button" id="calendar-today" class="action-btn">Today</button>
+          </div>
+        </div>
+      </section>
+      <section class="panel" id="calendar-agenda-panel">
+        <div class="panel-header">
+          <h2>Needs a decision</h2>
+          <p>Every project currently on this calendar that also has an open planning gap above — soonest target date first. Bring this list to Thursday's NPD meeting.</p>
+        </div>
+        <ul class="decisions-list" id="calendar-agenda-list"></ul>
+        <div class="empty-state" id="calendar-agenda-empty" hidden>No open gaps for what's currently in view — nice work.</div>
+      </section>
+      <div class="calendar-grid" id="calendar-grid"></div>
+      <div class="calendar-nodate-note" id="calendar-nodate-note"></div>
+    </section>
+
+    <section id="tab-panel-risks" class="tab-panel" hidden>
+      <div class="subnav" id="risks-subnav" role="tablist">
+        <button class="subtab active" data-subtab="live" role="tab" aria-selected="true">Live Risk Signals</button>
+        <button class="subtab" data-subtab="risk" role="tab" aria-selected="false">Risk Register</button>
+        <button class="subtab" data-subtab="issue" role="tab" aria-selected="false">Issues Register</button>
+        <button class="subtab" data-subtab="lesson" role="tab" aria-selected="false">Lessons Learnt</button>
+      </div>
+
+      <div class="subtab-panel" data-subtab-panel="live">
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Live Risk Signals</h2>
+          <p>Every non-completed project that needs risk intervention — someone has flagged it directly in ClickUp (Risk Status, or an explicit "at risk" health), it's simply fallen behind schedule and isn't done, or its next stage gate is within 14 days while its stage-gate checklist (Checklists tab) still isn't fully checked off. The first two come straight from ClickUp; the checklist signal is computed here in this browser, since the checklist itself is saved locally rather than in ClickUp. A project already flagged for another reason gets this reason added to it rather than a second row.</p>
+        </div>
+        <div class="kpi-row" id="risk-kpi-row"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Risk projects by health status</h2>
+          <p>Every project above, grouped by its current health bucket.</p>
+        </div>
+        <div class="viz-root" id="risk-chart-root">
+          <div class="hbar-chart" id="risk-health-chart"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>At-risk projects</h2>
+          <p>Sorted so anything still missing a mitigation plan leads.</p>
+        </div>
+        <div class="table-wrap">
+          <table id="risks-table">
+            <thead>
+              <tr>
+                <th>Project</th>
+                <th>Reason</th>
+                <th>Health</th>
+                <th>Owner(s)</th>
+                <th>Gate</th>
+                <th>Due</th>
+                <th>Mitigation</th>
+              </tr>
+            </thead>
+            <tbody id="risks-tbody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="risks-empty" hidden>No projects need risk intervention right now — nice work.</div>
+      </section>
+      </div>
+
+      <div class="subtab-panel" data-subtab-panel="risk" hidden>
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Risk Register</h2>
+          <p>Log a risk the moment you spot it. Saved to a dedicated ClickUp list, separate from the Active portfolio.</p>
+        </div>
+        <form id="risk-form" class="idea-form">
+          <div class="form-grid">
+            <label class="form-field">
+              <span class="form-label">Title <span class="required">*</span></span>
+              <input type="text" id="risk-title" name="title" placeholder="e.g. Cobalt-free cell supplier unconfirmed" required />
+            </label>
+            <label class="form-field">
+              <span class="form-label">Project / Product <span class="optional">(optional)</span></span>
+              <input type="text" id="risk-project" name="project" list="risk-project-options" placeholder="e.g. Ghana Charcoal Efficiency" />
+              <datalist id="risk-project-options"></datalist>
+            </label>
+            <label class="form-field">
+              <span class="form-label">Likelihood <span class="required">*</span></span>
+              <select id="risk-likelihood" name="likelihood" required>
+                <option value="">Select…</option>
+                <option>Low</option>
+                <option>Medium</option>
+                <option>High</option>
+              </select>
+            </label>
+            <label class="form-field">
+              <span class="form-label">Impact <span class="required">*</span></span>
+              <select id="risk-impact" name="impact" required>
+                <option value="">Select…</option>
+                <option>Low</option>
+                <option>Medium</option>
+                <option>High</option>
+              </select>
+            </label>
+            <label class="form-field">
+              <span class="form-label">Owner <span class="optional">(optional)</span></span>
+              <input type="text" id="risk-owner" name="owner" placeholder="Who's watching this" />
+            </label>
+            <label class="form-field">
+              <span class="form-label">Review by <span class="optional">(optional)</span></span>
+              <input type="date" id="risk-target-date" name="targetDate" />
+            </label>
+          </div>
+          <label class="form-field form-field-wide">
+            <span class="form-label">Mitigation plan <span class="optional">(optional)</span></span>
+            <input type="text" id="risk-mitigation" name="mitigation" placeholder="What's being done about it, if anything yet" />
+          </label>
+          <label class="form-field form-field-wide">
+            <span class="form-label">Description <span class="required">*</span></span>
+            <textarea id="risk-description" name="description" rows="3" placeholder="What could go wrong, and what happens if it does?" required></textarea>
+          </label>
+          <div class="form-actions">
+            <button type="submit" id="risk-submit-btn" class="action-btn action-btn-primary">Log risk</button>
+            <span id="risk-form-status" class="form-status"></span>
+          </div>
+        </form>
+      </section>
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Logged Risks</h2>
+          <p>Every risk logged so far, newest first.</p>
+        </div>
+        <ul class="ideas-list" id="risk-list"></ul>
+        <div class="empty-state" id="risk-list-empty" hidden>No risks logged yet.</div>
+      </section>
+      </div>
+
+      <div class="subtab-panel" data-subtab-panel="issue" hidden>
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Issues Register</h2>
+          <p>Log a live problem that needs resolving. Saved to a dedicated ClickUp list, separate from the Active portfolio.</p>
+        </div>
+        <form id="issue-form" class="idea-form">
+          <div class="form-grid">
+            <label class="form-field">
+              <span class="form-label">Title <span class="required">*</span></span>
+              <input type="text" id="issue-title" name="title" placeholder="e.g. Field unit #4 reporting inconsistent temp readings" required />
+            </label>
+            <label class="form-field">
+              <span class="form-label">Project / Product <span class="optional">(optional)</span></span>
+              <input type="text" id="issue-project" name="project" list="issue-project-options" placeholder="e.g. Senegal Stove Pilot" />
+              <datalist id="issue-project-options"></datalist>
+            </label>
+            <label class="form-field">
+              <span class="form-label">Severity <span class="required">*</span></span>
+              <select id="issue-severity" name="severity" required>
+                <option value="">Select…</option>
+                <option>Low</option>
+                <option>Medium</option>
+                <option>High</option>
+                <option>Critical</option>
+              </select>
+            </label>
+            <label class="form-field">
+              <span class="form-label">Owner <span class="optional">(optional)</span></span>
+              <input type="text" id="issue-owner" name="owner" placeholder="Who's resolving this" />
+            </label>
+            <label class="form-field">
+              <span class="form-label">Resolve by <span class="optional">(optional)</span></span>
+              <input type="date" id="issue-target-date" name="targetDate" />
+            </label>
+          </div>
+          <label class="form-field form-field-wide">
+            <span class="form-label">Description <span class="required">*</span></span>
+            <textarea id="issue-description" name="description" rows="3" placeholder="What's wrong, and what's it blocking?" required></textarea>
+          </label>
+          <div class="form-actions">
+            <button type="submit" id="issue-submit-btn" class="action-btn action-btn-primary">Log issue</button>
+            <span id="issue-form-status" class="form-status"></span>
+          </div>
+        </form>
+      </section>
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Logged Issues</h2>
+          <p>Every issue logged so far, newest first.</p>
+        </div>
+        <ul class="ideas-list" id="issue-list"></ul>
+        <div class="empty-state" id="issue-list-empty" hidden>No issues logged yet.</div>
+      </section>
+      </div>
+
+      <div class="subtab-panel" data-subtab-panel="lesson" hidden>
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Lessons Learnt Register</h2>
+          <p>Capture a lesson worth remembering next time. Saved to a dedicated ClickUp list, separate from the Active portfolio.</p>
+        </div>
+        <form id="lesson-form" class="idea-form">
+          <div class="form-grid">
+            <label class="form-field">
+              <span class="form-label">Title <span class="required">*</span></span>
+              <input type="text" id="lesson-title" name="title" placeholder="e.g. Bulk-imported lists need real Start Dates" required />
+            </label>
+            <label class="form-field">
+              <span class="form-label">Project / Product <span class="optional">(optional)</span></span>
+              <input type="text" id="lesson-project" name="project" list="lesson-project-options" placeholder="e.g. (portfolio-wide)" />
+              <datalist id="lesson-project-options"></datalist>
+            </label>
+            <label class="form-field">
+              <span class="form-label">Category <span class="required">*</span></span>
+              <select id="lesson-category" name="category" required>
+                <option value="">Select…</option>
+                <option>What went well</option>
+                <option>What went wrong</option>
+                <option>Recommendation</option>
+              </select>
+            </label>
+            <label class="form-field">
+              <span class="form-label">Owner <span class="optional">(optional)</span></span>
+              <input type="text" id="lesson-owner" name="owner" placeholder="Who's logging this" />
+            </label>
+          </div>
+          <label class="form-field form-field-wide">
+            <span class="form-label">Description <span class="required">*</span></span>
+            <textarea id="lesson-description" name="description" rows="3" placeholder="What happened, and what should change next time?" required></textarea>
+          </label>
+          <div class="form-actions">
+            <button type="submit" id="lesson-submit-btn" class="action-btn action-btn-primary">Log lesson</button>
+            <span id="lesson-form-status" class="form-status"></span>
+          </div>
+        </form>
+      </section>
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Logged Lessons</h2>
+          <p>Every lesson logged so far, newest first.</p>
+        </div>
+        <ul class="ideas-list" id="lesson-list"></ul>
+        <div class="empty-state" id="lesson-list-empty" hidden>No lessons logged yet.</div>
+      </section>
+      </div>
+    </section>
+
+    <section id="tab-panel-idea" class="tab-panel" hidden>
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Dump a New Idea</h2>
+          <p>Capture a project idea the moment it comes up. It's saved to a dedicated ClickUp intake list — kept separate from the Active portfolio until someone promotes it.</p>
+        </div>
+        <form id="idea-form" class="idea-form">
+          <div class="form-grid">
+            <label class="form-field">
+              <span class="form-label">Title <span class="required">*</span></span>
+              <input type="text" id="idea-title" name="title" placeholder="e.g. Modular lid clip redesign" required />
+            </label>
+            <label class="form-field">
+              <span class="form-label">Product / Model <span class="required">*</span></span>
+              <input type="text" id="idea-product" name="product" placeholder="e.g. ECOA Char Black" required />
+            </label>
+            <label class="form-field">
+              <span class="form-label">Product Category <span class="required">*</span></span>
+              <input type="text" id="idea-category" name="productCategory" list="idea-category-options" placeholder="e.g. Charcoal Stove" required />
+              <datalist id="idea-category-options"></datalist>
+            </label>
+            <label class="form-field">
+              <span class="form-label">Target date <span class="optional">(optional)</span></span>
+              <input type="date" id="idea-target-date" name="targetDate" />
+            </label>
+          </div>
+          <label class="form-field form-field-wide">
+            <span class="form-label">Description <span class="required">*</span></span>
+            <textarea id="idea-description" name="description" rows="4" placeholder="What's the idea? Why now? Any known constraints or dependencies?" required></textarea>
+          </label>
+          <div class="form-actions">
+            <button type="submit" id="idea-submit-btn" class="action-btn action-btn-primary">Submit idea</button>
+            <span id="idea-form-status" class="form-status"></span>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Recent Submissions</h2>
+          <p>Every idea dumped so far, newest first — confirms your submission actually landed in ClickUp.</p>
+        </div>
+        <ul class="ideas-list" id="ideas-list"></ul>
+        <div class="empty-state" id="ideas-empty" hidden>No ideas submitted yet — be the first.</div>
+      </section>
+    </section>
+
+    <section id="tab-panel-gantt" class="tab-panel" hidden>
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Gantt</h2>
+          <p>Every project with a due date, plotted from start to due against one shared timeline — quarters are shaded alternately since the business plans in quarters, and today's date is marked so you can see at a glance what's upcoming vs. already behind. Follows the VIEWING and DUE WITHIN context above.</p>
+        </div>
+        <div class="gantt-caption">
+          <span class="gantt-caption-item"><span class="gantt-caption-swatch gantt-caption-solid"></span>Real ClickUp Start Date</span>
+          <span class="gantt-caption-item"><span class="gantt-caption-swatch gantt-caption-dashed"></span>No Start Date set — assumed from when the task was created</span>
+          <span class="gantt-caption-item"><span class="gantt-caption-today-line"></span>Today</span>
+        </div>
+        <div class="gantt-scroll" id="gantt-scroll">
+          <div class="gantt-inner" id="gantt-inner"></div>
+        </div>
+        <div class="empty-state" id="gantt-empty" hidden>No projects with a due date to plot.</div>
+        <div class="gantt-nodate-note" id="gantt-nodate-note"></div>
+      </section>
+    </section>
+
+    <section id="tab-panel-resourcing" class="tab-panel" hidden>
+      <section class="panel">
+        <div class="panel-header">
+          <h2>This week's load</h2>
+          <p>Who actually has something starting or due this Monday&ndash;Sunday, sourced straight from Weekly Activity's own subtask data (same items, same dates) &mdash; distinct from the all-time charts below, which reflect every live project's overall assignment regardless of timing.</p>
+        </div>
+        <div class="weekly-load-grid" id="weekly-load-root">
+          <div class="empty-state">Loading this week's activity&hellip;</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Live workload share</h2>
+          <p>Each person's share of all active, delayed, and at-risk projects across the portfolio right now &mdash; every person gets their own slice (hover for the exact name and count); the busiest 6 are called out by name in the legend, everyone else is summarized as one legend row so it stays readable, but each of them still has a real slice of their own in the chart. The center number is a count of <strong>assignments</strong>, not distinct projects &mdash; a project with 3 owners adds 1 to each of their 3 slices, so it's counted 3 times here even though it's 1 project on the Projects tab.</p>
+        </div>
+        <div class="viz-root" id="workload-donut-root">
+          <div class="donut-layout">
+            <div class="donut-svg-wrap">
+              <svg id="workload-donut-svg" viewBox="0 0 200 200" role="img" aria-labelledby="workload-donut-title"></svg>
+              <div class="donut-center" id="workload-donut-center"></div>
+            </div>
+            <ul class="viz-legend" id="workload-donut-legend"></ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Board by person</h2>
+          <p>Every live (non-completed) project, grouped into one column per assignee — a project with multiple owners appears in each of their columns. "Unassigned" (if anyone carries it) always sits last.</p>
+        </div>
+        <div class="kanban-board" id="board-by-person"></div>
+        <div class="empty-state" id="board-by-person-empty" hidden>No live projects right now.</div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Workload by person</h2>
+          <p>Live project count per assignee, combining ClickUp's native assignee field with the "Assigned To (Multi)" custom field — read directly off each project, and rolled up from every one of its subtasks at any depth if the project itself has nobody set. Completed projects don't count against anyone's load. "Unassigned" means neither the project nor any of its subtasks (in this list) has an owner in ClickUp yet.</p>
+        </div>
+      </section>
+      <div class="workload-grid" id="workload-grid"></div>
+    </section>
+
+    <section id="tab-panel-tooling" class="tab-panel" hidden>
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Projects Needing Tooling</h2>
+          <p>Every non-completed project whose ClickUp Tooling field is set — scanned straight off the same portfolio data every other tab reads, not a separate list. Set a priority per project to sequence tooling spend across the portfolio, or drag rows by the handle to set your own order — both are saved in this browser only, since there's no ClickUp field for either. Open "Tasks" on a row to track the individual tooling tasks for that project (e.g. multiple vendor/fixture tasks on one project), each with an optional due date. Follows the VIEWING selector above.</p>
+        </div>
+        <div class="table-wrap">
+          <table id="tooling-table" class="resizable-table">
+            <colgroup>
+              <col style="width: 28px;">
+              <col style="width: 220px;">
+              <col style="width: 110px;">
+              <col style="width: 140px;">
+              <col style="width: 170px;">
+              <col style="width: 110px;">
+              <col style="width: 110px;">
+              <col style="width: 90px;">
+            </colgroup>
+            <thead>
+              <tr>
+                <th class="drag-handle-col"></th>
+                <th>Project</th>
+                <th>Health</th>
+                <th>Gate</th>
+                <th>Owner(s)</th>
+                <th>Target date</th>
+                <th>Priority</th>
+                <th>Tasks</th>
+              </tr>
+            </thead>
+            <tbody id="tooling-tbody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="tooling-empty" hidden>No active projects flagged for tooling right now.</div>
+      </section>
+    </section>
+
+    <section id="tab-panel-lab" class="tab-panel" hidden>
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Projects Needing Lab Work</h2>
+          <p>Every non-completed project currently at Scoping &amp; Feasibility, Preliminary Design, or Detailed Design — the three gates that involve bench/lab testing before a project can move on. There's no dedicated "lab" field in ClickUp, so this is inferred from stage gate. "Closes by" is each project's own next-gate target date, and the countdown recalculates every time this loads, so it counts down week on week rather than needing to be updated by hand. Open "Tasks" on a row to track individual lab tasks for that project, each with an optional due date. Follows the VIEWING selector above.</p>
+        </div>
+        <div class="table-wrap">
+          <table id="lab-table" class="resizable-table">
+            <colgroup>
+              <col style="width: 240px;">
+              <col style="width: 110px;">
+              <col style="width: 150px;">
+              <col style="width: 180px;">
+              <col style="width: 110px;">
+              <col style="width: 130px;">
+              <col style="width: 90px;">
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Project</th>
+                <th>Health</th>
+                <th>Gate</th>
+                <th>Owner(s)</th>
+                <th>Closes by</th>
+                <th>Time left</th>
+                <th>Tasks</th>
+              </tr>
+            </thead>
+            <tbody id="lab-tbody"></tbody>
+          </table>
+        </div>
+        <div class="empty-state" id="lab-empty" hidden>No active projects at a lab-testing gate right now.</div>
+      </section>
+    </section>
+
+    <section id="tab-panel-checklists" class="tab-panel" hidden>
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Stage-Gate Checklists</h2>
+          <p>Exit criteria from Project Kickoff through each project's current gate — earlier gates auto-check as complete, so only the current gate needs attention. Edit freely per project (drop or add items), and track progress with the heat-map bar. Saved in this browser only, not synced to ClickUp.</p>
+        </div>
+      </section>
+      <div class="checklist-grid" id="checklist-grid"></div>
+      <div class="empty-state" id="checklists-empty" hidden>No active projects in view right now.</div>
+    </section>
+  </main>
+
+  <!-- Project Deep Dive -- opened by clicking any project card (Projects by
+       Category, By Stage Gate, the Resources board, Weekly Activity). Five
+       sections -- Scope / Timeline / Cost & Resource / Impact / Priority --
+       edited and saved locally per project (see deepdive.js), never synced
+       to ClickUp. Rendered once, filled in by JS on open. -->
+  <div class="deepdive-overlay" id="deepdive-overlay" hidden>
+    <div class="deepdive-panel" id="deepdive-panel" role="dialog" aria-modal="true" aria-labelledby="deepdive-title">
+      <button type="button" class="deepdive-close" id="deepdive-close" aria-label="Close">&times;</button>
+      <div class="deepdive-header">
+        <button type="button" class="deepdive-icon-btn" id="deepdive-icon-btn" title="Change icon"></button>
+        <div class="deepdive-header-text">
+          <div class="deepdive-eyebrow" id="deepdive-eyebrow"></div>
+          <h2 id="deepdive-title"></h2>
+          <div class="deepdive-meta" id="deepdive-meta"></div>
+        </div>
+        <a class="deepdive-clickup-link" id="deepdive-clickup-link" href="#" target="_blank" rel="noopener" title="Open in ClickUp">Open in ClickUp ↗</a>
+      </div>
+      <div class="deepdive-icon-picker" id="deepdive-icon-picker" hidden></div>
+      <div class="deepdive-tabs" id="deepdive-tabs"></div>
+      <div class="deepdive-body" id="deepdive-body"></div>
+      <div class="deepdive-footer">
+        <span id="deepdive-saved-note" class="deepdive-saved-note">Saved locally in this browser -- not synced to ClickUp.</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/dashboard.js"></script>
+</body>
+</html>

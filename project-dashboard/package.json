@@ -1,0 +1,20 @@
+{
+  "name": "pm-intelligence-dashboard",
+  "version": "0.1.0",
+  "description": "Project Management Intelligence Platform — ClickUp as source of truth, live dashboards + exports.",
+  "private": true,
+  "scripts": {
+    "preview": "node scripts/preview-server.js",
+    "dev": "netlify dev",
+    "discover": "node scripts/discover-clickup.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "netlify-cli": "^17.0.0"
+  },
+  "dependencies": {
+    "pptxgenjs": "^4.0.1"
+  }
+}
