@@ -29,13 +29,23 @@ const SLIDE_BG = "FBF9F6";
 
 let logoDataUri = null;
 try {
-  const logoPath = path.join(__dirname, "..", "..", "public", "assets", "ecoa-logo.png");
+  // Wordmark-only crop (ecoa-mark-header.png), not the full ecoa-logo.png
+  // lockup -- the full asset's "stoves for life" tagline is illegible at
+  // title-slide size, and its generous vertical padding was previously
+  // forced into a 0.55x0.55in SQUARE box (see LOGO_H/LOGO_W below), which
+  // squished the ~2.5:1 image noticeably. The crop's own aspect ratio is
+  // used instead so nothing gets stretched.
+  const logoPath = path.join(__dirname, "..", "..", "public", "assets", "ecoa-mark-header.png");
   logoDataUri = `image/png;base64,${fs.readFileSync(logoPath).toString("base64")}`;
 } catch {
   // Logo is a nice-to-have on the title slide only -- if it's ever missing
   // (e.g. a stripped-down deploy), the deck still builds fine without it.
   logoDataUri = null;
 }
+// ecoa-mark-header.png is 500x117 -- fix the display height and derive the
+// width from that real ratio rather than hardcoding both.
+const LOGO_H = 0.4;
+const LOGO_W = LOGO_H * (500 / 117);
 
 // Thin accent rule used under slide titles and as a footer bar, so every
 // slide carries the same brand mark instead of relying on a title color
@@ -48,21 +58,26 @@ function titleSlide(pptx, data) {
   const slide = pptx.addSlide();
   slide.background = { color: SLIDE_BG };
   slide.addShape("rect", { x: 0, y: 0, w: 10, h: 1.75, fill: { color: ACCENT_TINT } });
+  const textX = logoDataUri ? 0.5 + LOGO_W + 0.2 : 0.5;
   if (logoDataUri) {
-    slide.addImage({ data: logoDataUri, x: 0.5, y: 0.45, w: 0.55, h: 0.55 });
+    slide.addImage({ data: logoDataUri, x: 0.5, y: 0.6 - LOGO_H / 2, w: LOGO_W, h: LOGO_H });
+  } else {
+    // Fallback when the asset is missing -- the wordmark crop already
+    // reads as "ecoa" on its own, so this text label only needs to exist
+    // when there's no image to carry that.
+    slide.addText("ecoa", {
+      x: textX,
+      y: 0.45,
+      w: 3,
+      h: 0.3,
+      fontSize: 14,
+      bold: true,
+      color: ACCENT_DEEP,
+      charSpacing: 1,
+    });
   }
-  slide.addText("ecoa", {
-    x: logoDataUri ? 1.15 : 0.5,
-    y: 0.45,
-    w: 3,
-    h: 0.3,
-    fontSize: 14,
-    bold: true,
-    color: ACCENT_DEEP,
-    charSpacing: 1,
-  });
   slide.addText("Biomass Portfolio Intelligence", {
-    x: logoDataUri ? 1.15 : 0.5,
+    x: textX,
     y: 0.75,
     w: 4,
     h: 0.25,
@@ -75,10 +90,34 @@ function titleSlide(pptx, data) {
   accentRule(slide, 5.57);
 }
 
+// Truncates to a max length on a word boundary -- used for the team/priority
+// lines below so a long Deep Dive entry can't wrap into (and visually
+// collide with) the task list underneath it, given pptxgenjs auto-wraps
+// text boxes without a strict height clamp.
+function truncate(text, max) {
+  if (!text || text.length <= max) return text || "";
+  return `${text.slice(0, max).replace(/\s+\S*$/, "")}…`;
+}
+
 function projectSlide(pptx, p) {
   const slide = pptx.addSlide();
   slide.background = { color: SLIDE_BG };
-  slide.addText(p.name || "Untitled project", { x: 0.4, y: 0.3, w: 9.2, h: 0.5, fontSize: 20, bold: true, color: INK });
+  // Same square cover photo used as this project's thumbnail everywhere
+  // else in the dashboard (see deepDiveIconHtml/buildStandupSummaryData) --
+  // shown top-right so the deck is recognizable per-project at a glance.
+  // Title width is trimmed to leave it clear rather than risk overlap.
+  const hasCover = !!p.coverPhoto;
+  const titleWidth = hasCover ? 8.0 : 9.2;
+  slide.addText(p.name || "Untitled project", { x: 0.4, y: 0.3, w: titleWidth, h: 0.5, fontSize: 20, bold: true, color: INK });
+  if (hasCover) {
+    try {
+      slide.addShape("roundRect", { x: 8.58, y: 0.26, w: 0.62, h: 0.62, fill: { color: "FFFFFF" }, line: { color: ACCENT_TINT, width: 1 }, rectRadius: 0.06 });
+      slide.addImage({ data: p.coverPhoto.replace(/^data:/, ""), x: 8.62, y: 0.3, w: 0.54, h: 0.54, sizing: { type: "contain", w: 0.54, h: 0.54 } });
+    } catch {
+      // A malformed coverPhoto dataURL shouldn't take down the whole
+      // export -- the slide just renders without the thumbnail.
+    }
+  }
   if (p.gate) {
     slide.addText(p.gate, {
       x: 0.4,
@@ -96,6 +135,40 @@ function projectSlide(pptx, p) {
     });
   }
   accentRule(slide, 1.18);
+
+  // Team utilization + priority, pulled from this project's own Deep Dive
+  // (see buildStandupSummaryData/priorityColumnText in dashboard.js) --
+  // shown above the task list so the deck carries the same "who's on this
+  // and what's the live call" context the standalone Weekly Priorities
+  // table used to, without a separate slide/tab to keep in sync.
+  let cursorY = 1.3;
+  if (p.teamRows && p.teamRows.length) {
+    const teamText = truncate(
+      p.teamRows.map((r) => `${r.role || "—"}${r.effort ? ` (${r.effort})` : ""}`).join("   ·   "),
+      150
+    );
+    slide.addText(`Team: ${teamText}`, { x: 0.5, y: cursorY, w: 9, h: 0.3, fontSize: 11, color: MUTED });
+    cursorY += 0.34;
+  }
+  if (p.priorityText) {
+    slide.addText(truncate(p.priorityText, 140), {
+      x: 0.5,
+      y: cursorY,
+      w: 9,
+      h: 0.32,
+      fontSize: 11.5,
+      bold: true,
+      color: ACCENT_DEEP,
+      fill: { color: ACCENT_TINT },
+      align: "left",
+      valign: "middle",
+      rectRadius: 0.05,
+      shape: "roundRect",
+      inset: 0.08,
+    });
+    cursorY += 0.42;
+  }
+
   const lines = (p.lines || []).map((l) => ({
     text: `${l.isParent ? "" : l.done ? "☑ " : "☐ "}${l.text}${l.due ? `  (${l.due})` : ""}${!l.isParent && l.status ? `  — ${l.status}` : ""}`,
     options: {
@@ -107,10 +180,12 @@ function projectSlide(pptx, p) {
       breakLine: true,
     },
   }));
+  const linesY = cursorY;
+  const linesH = Math.max(1.0, 5.3 - linesY);
   if (lines.length) {
-    slide.addText(lines, { x: 0.5, y: 1.4, w: 9, h: 3.9, valign: "top" });
+    slide.addText(lines, { x: 0.5, y: linesY, w: 9, h: linesH, valign: "top" });
   } else {
-    slide.addText("Nothing starting or due this week.", { x: 0.5, y: 1.4, w: 9, h: 0.5, fontSize: 13, italic: true, color: MUTED });
+    slide.addText("Nothing starting or due this week.", { x: 0.5, y: linesY, w: 9, h: 0.5, fontSize: 13, italic: true, color: MUTED });
   }
   accentRule(slide, 5.57);
 }

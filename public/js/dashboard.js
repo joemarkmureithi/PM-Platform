@@ -341,7 +341,7 @@
   // ---- Portfolio Mix charts (hand-rolled SVG/HTML, no chart library) -----
 
   function buildDonut(counts) {
-    const segments = KPI_ORDER.map(({ key, dotClass }) => ({ value: counts?.[key] ?? 0, dotClass }));
+    const segments = KPI_ORDER.map(({ key, label, dotClass }) => ({ value: counts?.[key] ?? 0, label, dotClass }));
     const total = segments.reduce((s, seg) => s + seg.value, 0) || 1;
     const r = 15.9155; // circumference ~= 100, so percentages map directly to dasharray units
     const circumference = 2 * Math.PI * r;
@@ -350,20 +350,29 @@
       active: "series-1", delayed: "status-warning", atRisk: "status-critical", completed: "status-good",
     }[dotClass]})`;
 
+    // Each real segment is a .donut-slice -- same interactive-hover class
+    // the Resources tab's workload donut already uses (grow + brighten on
+    // hover, wired up by setupDonutHoverTooltip below), so this chart
+    // finally matches the rest of the app's charts instead of being the
+    // one static one. The hover GROWTH itself is scoped to #health-donut
+    // in CSS rather than sharing the workload donut's exact stroke-width,
+    // since this donut's viewBox (and base 6px stroke) is much smaller --
+    // the same absolute hover width would swallow the whole chart.
     const circles = segments
       .filter((seg) => seg.value > 0)
       .map((seg) => {
         const fraction = seg.value / total;
         const dash = fraction * circumference;
         const gap = circumference - dash;
-        const circle = `<circle r="${r}" cx="21" cy="21" fill="transparent" stroke="${colorOf(seg.dotClass)}" stroke-width="6" stroke-dasharray="${dash.toFixed(2)} ${gap.toFixed(2)}" stroke-dashoffset="${(-offsetAccum).toFixed(2)}" />`;
+        const pct = (fraction * 100).toFixed(1);
+        const circle = `<circle class="donut-slice" data-name="${escapeHtml(seg.label)}" data-value="${seg.value}" data-pct="${pct}" r="${r}" cx="21" cy="21" fill="transparent" stroke="${colorOf(seg.dotClass)}" stroke-width="6" stroke-dasharray="${dash.toFixed(2)} ${gap.toFixed(2)}" stroke-dashoffset="${(-offsetAccum).toFixed(2)}"><title>${escapeHtml(seg.label)}: ${seg.value} (${pct}%)</title></circle>`;
         offsetAccum += dash;
         return circle;
       })
       .join("");
 
     return `
-      <svg width="140" height="140" viewBox="0 0 42 42" role="img" aria-label="Health distribution donut chart">
+      <svg id="health-donut-svg" width="140" height="140" viewBox="0 0 42 42" role="img" aria-label="Health distribution donut chart">
         <circle r="${r}" cx="21" cy="21" fill="transparent" stroke="var(--gridline)" stroke-width="6" />
         ${circles}
         <text x="21" y="19.5" text-anchor="middle" font-size="7" font-weight="700" fill="var(--text-primary)">${total}</text>
@@ -381,6 +390,15 @@
       li.innerHTML = `<span class="swatch status-dot ${dotClass}"></span>${label}<span class="legend-value">${counts?.[key] ?? 0}</span>`;
       legend.appendChild(li);
     });
+    // Unlike the workload donut (whose root container is never itself
+    // replaced wholesale -- only its svg/legend/center children are), this
+    // donut's own wrapper (#health-donut) just had its ENTIRE innerHTML
+    // swapped in above, taking any previously-appended tooltip element and
+    // event listeners with it. So this re-wires hover on every render
+    // instead of once at init -- setupDonutHoverTooltip is idempotent
+    // either way (it only creates a tooltip element if one isn't already
+    // there), so this is just as cheap as it looks.
+    setupDonutHoverTooltip("health-donut", "health-donut-svg", healthDonutTooltipLabel);
   }
 
   function renderGateChart(byGate) {
@@ -406,10 +424,15 @@
     container.innerHTML = entries
       .map(([label, value], i) => {
         const opacity = (0.35 + 0.65 * (i / Math.max(entries.length - 1, 1))).toFixed(2);
+        // The base opacity gradient above is a deliberate ranking cue
+        // (busier stages read more solid), so hover doesn't touch opacity
+        // directly -- instead --bar-fill-opacity carries that per-row value
+        // through to CSS, which hover can override to "spotlight" whichever
+        // row's actually under the cursor without fighting the inline style.
         return `
-        <div class="bar-row">
-          <div class="bar-label" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
-          <div class="bar-track"><div class="bar-fill" style="width:${(value / max) * 100}%; background:var(--series-1); opacity:${opacity}"></div></div>
+        <div class="bar-row" title="${escapeHtml(label)}: ${value} project${value === 1 ? "" : "s"}">
+          <div class="bar-label">${escapeHtml(label)}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${(value / max) * 100}%; background:var(--series-1); --bar-fill-opacity:${opacity};"></div></div>
           <div class="bar-value">${value}</div>
         </div>`;
       })
@@ -652,6 +675,7 @@
   function emptyDeepDive() {
     return {
       icon: null, // { emoji } or { photo: dataURL } -- null = category default
+      coverPhoto: null, // dataURL of a larger banner photo, separate from the small header icon -- null = no cover set
       scope: { notes: "", rows: [] }, // rows: { id, feature, stage, rationale, lift }
       timeline: { notes: "", phases: [] }, // phases: { id, label, window, status: upcoming|active|done }
       costResource: { notes: "", rows: [] }, // rows: { id, role, effort, notes }
@@ -753,8 +777,14 @@
   // renderers omit it and this loads it directly, which is a cheap
   // localStorage.getItem per visible card and keeps a card's mini-icon in
   // sync with whatever custom icon/photo was set from inside the modal.
+  // `coverPhoto` is the single source of truth for a project's image --
+  // set once in the Deep Dive header, it's what shows up everywhere this is
+  // called (project cards, kanban, etc.), not just inside the modal.
+  // `icon.photo` is only read as a fallback for data saved before this
+  // became one unified image.
   function deepDiveIconHtml(project, data) {
     const d = data || loadDeepDive(project);
+    if (d && d.coverPhoto) return `<img src="${escapeHtml(d.coverPhoto)}" alt="" />`;
     if (d && d.icon && d.icon.photo) return `<img src="${escapeHtml(d.icon.photo)}" alt="" />`;
     if (d && d.icon && d.icon.emoji) return escapeHtml(d.icon.emoji);
     return escapeHtml(DEEPDIVE_CATEGORY_ICON[project.productCategory] || "📦");
@@ -762,6 +792,7 @@
 
   // ---- modal state + open/close -------------------------------------------
   let deepDiveState = null; // { project, data, activeTab }
+  let cropState = null; // { naturalW, naturalH, viewportSize, baseScale, scale, tx, ty, dragging, startX, startY, startTx, startTy }
 
   function openDeepDive(projectId) {
     const project = findProject(projectId);
@@ -769,8 +800,22 @@
     const data = loadDeepDive(project);
     deepDiveState = { project, data, activeTab: "scope" };
     renderDeepDiveHeader();
+    renderDeepDiveCover();
     renderDeepDiveTabs();
     renderDeepDiveBody();
+    // The Timeline tab's "Live from ClickUp" feed reads weeklyData, which is
+    // otherwise only fetched on first visiting Weekly Activity/Resources --
+    // kick it off here too so opening a Deep Dive straight from, say, By
+    // Category still gets live data instead of the "give it a moment" note.
+    // Guarded so it only re-renders if this same project's Timeline tab is
+    // still open once the (possibly slow) fetch resolves.
+    if (!weeklyLoaded) {
+      loadWeekly().then(() => {
+        if (deepDiveState && deepDiveState.project.id === projectId && deepDiveState.activeTab === "timeline") {
+          renderDeepDiveBody();
+        }
+      });
+    }
     document.getElementById("deepdive-overlay").hidden = false;
     document.body.classList.add("deepdive-open");
   }
@@ -781,6 +826,14 @@
     const picker = document.getElementById("deepdive-icon-picker");
     if (picker) picker.hidden = true;
     document.body.classList.remove("deepdive-open");
+    // A cover-photo/emoji change made just now (deepDiveIconHtml reads it
+    // straight from localStorage) is otherwise invisible until the next full
+    // data refresh -- re-render every card grid that shows this project's
+    // thumbnail so closing the modal shows it applied immediately.
+    if (typeof renderGroupedTabs === "function") renderGroupedTabs();
+    if (typeof renderWorkloadKanban === "function" && window.__portfolioData) {
+      renderWorkloadKanban(window.__portfolioData.workload, weeklyData);
+    }
     deepDiveState = null;
   }
 
@@ -797,10 +850,70 @@
     document.getElementById("deepdive-meta").innerHTML = `
       <span class="health-pill"><span class="status-dot ${project.healthBucket}"></span>${escapeHtml(HEALTH_LABEL[project.healthBucket] || project.healthBucket)}</span>
       ${gate ? `<span class="checklist-gate-pill">${escapeHtml(gate)}</span>` : ""}`;
-    document.getElementById("deepdive-icon-btn").innerHTML = deepDiveIconHtml(project, data);
     const link = document.getElementById("deepdive-clickup-link");
     link.style.display = project.url ? "" : "none";
     link.href = project.url || "#";
+
+    // Quick facts -- a snapshot of this project's own Cost & Resource /
+    // Priority tabs, surfaced right in the header (see .deepdive-quick-facts
+    // in style.css) so a PM scanning between projects sees "who's on this
+    // and what's the live call" without clicking into either tab. Same
+    // source data the weekly export already reuses (priorityColumnText,
+    // costResource.rows) -- nothing new to maintain.
+    const factsEl = document.getElementById("deepdive-quick-facts");
+    if (factsEl) {
+      const teamRows = (data.costResource && data.costResource.rows) || [];
+      const teamChips = teamRows
+        .filter((r) => r.role)
+        .map((r) => `<span class="deepdive-fact-chip">${escapeHtml(r.role)}${r.effort ? ` · ${escapeHtml(r.effort)}` : ""}</span>`)
+        .join("");
+      const priorityText = priorityColumnText(data);
+      if (!teamChips && !priorityText) {
+        factsEl.innerHTML = `<div class="deepdive-fact-empty">Fill in Cost &amp; Resource / Priority to see a quick summary here.</div>`;
+      } else {
+        factsEl.innerHTML = `
+          ${teamChips ? `<div class="deepdive-fact-group">${teamChips}</div>` : ""}
+          ${priorityText ? `<div class="deepdive-fact-priority">${escapeHtml(priorityText)}</div>` : ""}`;
+      }
+    }
+  }
+
+  // The one square photo/emoji tile -- serves as both this project's cover
+  // and, via deepDiveIconHtml, its thumbnail everywhere else in the
+  // dashboard. Shows the photo when set; otherwise a large emoji (the
+  // project's own choice, or the category default) fills the same square.
+  function renderDeepDiveCover() {
+    const { project, data } = deepDiveState;
+    const img = document.getElementById("deepdive-cover-img");
+    const emojiEl = document.getElementById("deepdive-cover-emoji");
+    const removeBtn = document.getElementById("deepdive-cover-remove");
+    const recropBtn = document.getElementById("deepdive-cover-recrop");
+    const zoomHint = document.getElementById("deepdive-cover-zoom-hint");
+    const uploadLabelText = document.getElementById("deepdive-cover-upload-label-text");
+    if (!img || !emojiEl || !removeBtn) return;
+    if (data.coverPhoto) {
+      img.src = data.coverPhoto;
+      img.hidden = false;
+      emojiEl.hidden = true;
+      removeBtn.hidden = false;
+      if (recropBtn) recropBtn.hidden = false;
+      if (zoomHint) zoomHint.hidden = false;
+      if (uploadLabelText) uploadLabelText.textContent = "📷 Change photo";
+    } else {
+      img.hidden = true;
+      img.removeAttribute("src");
+      emojiEl.hidden = false;
+      emojiEl.textContent = (data.icon && data.icon.emoji) || DEEPDIVE_CATEGORY_ICON[project.productCategory] || "📦";
+      removeBtn.hidden = true;
+      if (recropBtn) recropBtn.hidden = true;
+      if (zoomHint) zoomHint.hidden = true;
+      if (uploadLabelText) uploadLabelText.textContent = "📷 Add photo";
+    }
+    // Only offer the emoji picker when there's no photo to choose between --
+    // once a photo is set, it wins in deepDiveIconHtml regardless of any
+    // emoji choice, so picking one then would silently do nothing.
+    const emojiBtn = document.getElementById("deepdive-cover-emoji-btn");
+    if (emojiBtn) emojiBtn.hidden = !!data.coverPhoto;
   }
 
   function deepDiveTabHasOpenItems(tabKey, data) {
@@ -817,10 +930,10 @@
   }
 
   function renderDeepDiveBody() {
-    const { data, activeTab } = deepDiveState;
+    const { data, activeTab, project } = deepDiveState;
     const body = document.getElementById("deepdive-body");
     if (activeTab === "scope") body.innerHTML = deepDiveScopeHtml(data.scope);
-    else if (activeTab === "timeline") body.innerHTML = deepDiveTimelineHtml(data.timeline);
+    else if (activeTab === "timeline") body.innerHTML = deepDiveTimelineHtml(data.timeline, project);
     else if (activeTab === "costResource") body.innerHTML = deepDiveCostHtml(data.costResource);
     else if (activeTab === "impact") body.innerHTML = deepDiveImpactHtml(data.impact);
     else if (activeTab === "priority") body.innerHTML = deepDivePriorityHtml(data.priority);
@@ -849,8 +962,272 @@
       </div>`;
   }
 
-  function deepDiveTimelineHtml(timeline) {
+  // Read-only, straight off /api/weekly's per-project openTasks (the same
+  // data Resources' workload board reads) -- never edited here, unlike the
+  // hand-curated phases below. Deliberately kept separate: this shows
+  // "what's actually happening in ClickUp right now," the phases list is
+  // the PM's own higher-level roadmap read on the project, and conflating
+  // the two would mean losing one or the other on every edit.
+  //
+  // Split into two views rather than one flat list: a near-term list (this
+  // week -- the stuff a PM actually needs to act on right now) and a
+  // comprehensive mini Gantt below it showing every dated open task on one
+  // timeline, so the full shape of the project's remaining work is visible
+  // without scrolling a long list. Was 30 days, which routinely surfaced 90+
+  // tasks -- not "near-term" by any useful reading of the word; a flat
+  // "next N days" rolling window was the next attempt, but that meant
+  // Weekly Activity's "this week" and the Deep Dive's "near-term" meant two
+  // different date ranges for the exact same phrase. Now both mean the
+  // literal same Monday-through-Sunday window (see currentWeekBoundsMs) --
+  // one definition of "this week" for the whole app, not a second one
+  // invented here.
+  const DEEPDIVE_NEAR_TERM_LABEL = "this week";
+
+  // Monday 00:00 (local) through the following Monday 00:00, exclusive --
+  // the same week boundary Weekly Activity already uses (see
+  // currentWeekRangeLabel/isIsoInCurrentWeek above), just returned as
+  // {startMs, endMs} instead of a label or an ISO-string-only check, so the
+  // Deep Dive's near-term filter (which compares against epoch-ms numbers,
+  // not ISO strings -- see the Date.parse-vs-new-Date note below) can reuse
+  // the exact same "this week" definition instead of its own rolling
+  // N-days-from-now window.
+  function currentWeekBoundsMs(now = new Date()) {
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    monday.setDate(monday.getDate() - ((now.getDay() + 6) % 7));
+    const nextMonday = new Date(monday);
+    nextMonday.setDate(monday.getDate() + 7);
+    return { startMs: monday.getTime(), endMs: nextMonday.getTime() };
+  }
+
+  // `project` is the full portfolio project (not just its id) so the
+  // comprehensive timeline below can plot the project's own target gate
+  // date as a second "important day" marker alongside today -- see
+  // gateInfo below and deepDiveMiniGanttHtml's GATE marker.
+  function deepDiveClickupLiveHtml(project) {
+    const projectId = project.id;
+    const wp = weeklyData && Array.isArray(weeklyData.projects) ? weeklyData.projects.find((p) => p.id === projectId) : null;
+    if (!wp) {
+      return `<div class="deepdive-clickup-live-note">Live ClickUp activity will appear here once Weekly Activity data has loaded — give it a moment and reopen this tab.</div>`;
+    }
+    const gateDateMs = project.targetGateDate ? new Date(project.targetGateDate).getTime() : NaN;
+    const gateInfo = Number.isFinite(gateDateMs)
+      ? { label: project.currentGate || project.gatePhase || "Gate", dateMs: gateDateMs }
+      : null;
+    const allOpen = (wp.openTasks || []).filter((t) => t.statusType !== "done");
+    if (allOpen.length === 0) {
+      return `<div class="deepdive-clickup-live-note">No open ClickUp subtasks found for this project.</div>`;
+    }
+
+    // openTasks' startDate/dueDate come through as epoch-ms numbers (see
+    // flattenOpenTasks in transform.js), not ISO strings -- new Date(x)
+    // handles both a number and a string correctly, where Date.parse(x)
+    // would silently return NaN on a number (it coerces to a string first,
+    // which isn't a parseable date format).
+    // No lower bound on purpose -- anything still open and overdue belongs
+    // in "this week" regardless of how long ago it was due, same as the
+    // window's previous rolling-forward version did. Only the upper bound
+    // (how far ahead counts as "this week") changed, from now+7 days to
+    // the actual end of the current calendar week.
+    const { endMs: nearTermCutoffMs } = currentWeekBoundsMs();
+    const nearTerm = allOpen
+      .filter((t) => {
+        const ms = t.dueDate ? new Date(t.dueDate).getTime() : t.startDate ? new Date(t.startDate).getTime() : NaN;
+        return Number.isFinite(ms) && ms < nearTermCutoffMs;
+      })
+      .sort((a, b) => new Date(a.dueDate || a.startDate).getTime() - new Date(b.dueDate || b.startDate).getTime());
+
+    const shown = nearTerm.slice(0, 20);
+    const rows = shown
+      .map((t) => {
+        const dateLabel = t.dueDate
+          ? `Due ${fmtDate(new Date(t.dueDate).toISOString())}`
+          : t.startDate
+          ? `Starts ${fmtDate(new Date(t.startDate).toISOString())}`
+          : "No date set";
+        return `
+          <li class="deepdive-clickup-live-item">
+            <span class="status-dot active"></span>
+            <span class="deepdive-clickup-live-name">${escapeHtml(t.name)}</span>
+            <span class="deepdive-clickup-live-status">${escapeHtml(t.status || "")}</span>
+            <span class="deepdive-clickup-live-date">${escapeHtml(dateLabel)}</span>
+          </li>`;
+      })
+      .join("");
+    const moreNote = nearTerm.length > shown.length ? `<div class="deepdive-clickup-live-more">+ ${nearTerm.length - shown.length} more in the ${DEEPDIVE_NEAR_TERM_LABEL}</div>` : "";
+    const nearTermBody = nearTerm.length
+      ? `<ul class="deepdive-clickup-live-list">${rows}</ul>${moreNote}`
+      : `<div class="deepdive-clickup-live-note">Nothing starting or due in the ${DEEPDIVE_NEAR_TERM_LABEL}.</div>`;
+
+    const datedTasks = allOpen.filter((t) => t.startDate || t.dueDate);
+    const undatedCount = allOpen.length - datedTasks.length;
+    const undatedNote = undatedCount > 0
+      ? `<div class="deepdive-clickup-live-more">+ ${undatedCount} more open with no date set — see Weekly Activity's Product Backlog</div>`
+      : "";
+
     return `
+      <div class="deepdive-clickup-live">
+        <div class="deepdive-clickup-live-title">Near-term (${DEEPDIVE_NEAR_TERM_LABEL}) <span class="deepdive-clickup-live-count">${nearTerm.length} open</span></div>
+        ${nearTermBody}
+      </div>
+      <div class="deepdive-gantt-block">
+        <div class="deepdive-clickup-live-title">Comprehensive timeline <span class="deepdive-clickup-live-count">${datedTasks.length} dated task${datedTasks.length === 1 ? "" : "s"}</span></div>
+        ${deepDiveMiniGanttHtml(datedTasks, gateInfo)}
+        ${undatedNote}
+      </div>`;
+  }
+
+  // Task-level counterpart to renderGantt() (which plots one bar per
+  // project) -- same visual language (quarter + month header, shaded
+  // bands, dashed "assumed" bars when only a due date is known) but scoped
+  // to one project's own open tasks and returned as a markup string, since
+  // the Deep Dive body is re-rendered wholesale rather than owning a
+  // persistent container the way the Gantt tab does. Reuses the Gantt
+  // tab's own constants/helpers (GANTT_PX_PER_DAY, quarterStart,
+  // monthStart, etc. -- defined once, below, in the same module) rather
+  // than duplicating that math.
+  //
+  // Borrows two ideas straight from how the PM roadmap decks (the kind
+  // exported as PPTX elsewhere in this app) lay out a timeline: a month
+  // row under the quarter row so a bar's rough date reads at a glance
+  // without hovering, and "important day" markers -- not just today, but
+  // this project's own next stage gate -- called out as a labeled vertical
+  // line rather than left for the viewer to eyeball against the axis.
+  // `gateInfo` is optional ({ label, dateMs }, see deepDiveClickupLiveHtml)
+  // -- omitted or outside the visible range, the gate marker just doesn't
+  // render.
+  const DEEPDIVE_GANTT_LABEL_WIDTH = 170;
+  function deepDiveMiniGanttHtml(tasks, gateInfo) {
+    const bars = tasks
+      .map((t) => {
+        // Same epoch-ms-not-ISO-string shape as the near-term filter above
+        // -- new Date(x), not Date.parse(x).
+        const dueMs = t.dueDate ? new Date(t.dueDate).getTime() : NaN;
+        const realStartMs = t.startDate ? new Date(t.startDate).getTime() : NaN;
+        let endMs = Number.isFinite(dueMs) ? dueMs : realStartMs;
+        let startMs = Number.isFinite(realStartMs) ? realStartMs : dueMs;
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
+        const assumed = !Number.isFinite(realStartMs);
+        if (startMs > endMs) startMs = endMs;
+        return { t, startMs, endMs, assumed };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.startMs - b.startMs);
+
+    if (bars.length === 0) {
+      return `<div class="deepdive-clickup-live-note">No dated tasks yet to plot on a timeline.</div>`;
+    }
+
+    const LABEL_WIDTH = DEEPDIVE_GANTT_LABEL_WIDTH;
+    const earliestStart = new Date(Math.min(...bars.map((b) => b.startMs)));
+    const latestEnd = new Date(Math.max(...bars.map((b) => b.endMs)));
+    const rangeStart = quarterStart(earliestStart);
+    const rangeEnd = quarterEndExclusive(latestEnd);
+    const rangeStartMs = rangeStart.getTime();
+    const totalDays = Math.max(1, Math.round((rangeEnd.getTime() - rangeStartMs) / DAY_MS));
+    const timelineWidth = totalDays * GANTT_PX_PER_DAY;
+
+    const QUARTER_LABEL = ["Q1", "Q2", "Q3", "Q4"];
+    const quarters = [];
+    let cursor = new Date(rangeStart);
+    while (cursor.getTime() < rangeEnd.getTime()) {
+      const qStart = new Date(cursor);
+      const qEnd = quarterEndExclusive(qStart);
+      const days = Math.round((qEnd.getTime() - qStart.getTime()) / DAY_MS);
+      quarters.push({
+        label: `${QUARTER_LABEL[quarterOf(qStart)]} ${qStart.getFullYear()}`,
+        leftPx: ((qStart.getTime() - rangeStartMs) / DAY_MS) * GANTT_PX_PER_DAY,
+        widthPx: days * GANTT_PX_PER_DAY,
+      });
+      cursor = qEnd;
+    }
+    const quartersHtml = quarters
+      .map((q, i) => `<div class="gantt-quarter${i % 2 === 1 ? " gantt-quarter-shaded" : ""}" style="left:${q.leftPx}px;width:${q.widthPx}px;">${escapeHtml(q.label)}</div>`)
+      .join("");
+    const quarterBandsHtml = quarters
+      .map((q, i) => (i % 2 === 1 ? `<div class="gantt-quarter-band" style="left:${q.leftPx}px;width:${q.widthPx}px;"></div>` : ""))
+      .join("");
+
+    // Second, finer header row -- same axis, labeled by month -- exactly
+    // the two-tier pattern renderGantt() already uses on the main Gantt
+    // tab (reusing its monthStart/monthEndExclusive + .gantt-months/
+    // .gantt-month styling rather than inventing a second look here).
+    const MONTH_LABEL = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const months = [];
+    cursor = new Date(rangeStart);
+    while (cursor.getTime() < rangeEnd.getTime()) {
+      const mStart = new Date(cursor);
+      const mEnd = monthEndExclusive(mStart);
+      const days = Math.round((mEnd.getTime() - mStart.getTime()) / DAY_MS);
+      months.push({
+        label: `${MONTH_LABEL[mStart.getMonth()]} ${mStart.getFullYear()}`,
+        leftPx: ((mStart.getTime() - rangeStartMs) / DAY_MS) * GANTT_PX_PER_DAY,
+        widthPx: days * GANTT_PX_PER_DAY,
+      });
+      cursor = mEnd;
+    }
+    const monthsHtml = months
+      .map((m) => `<div class="gantt-month" style="left:${m.leftPx}px;width:${m.widthPx}px;">${escapeHtml(m.label)}</div>`)
+      .join("");
+
+    // "Important day" markers: today, always, plus this project's own next
+    // stage gate when it falls inside the plotted range -- a labeled
+    // vertical line each, not just today's plain rule, so the one date
+    // that actually matters most for THIS project (not just "now") is
+    // called out the same way a roadmap deck would flag it.
+    const inRange = (ms) => ms >= rangeStartMs && ms <= rangeEnd.getTime();
+    const markerHtml = (ms, label, kind) =>
+      inRange(ms)
+        ? `<div class="deepdive-gantt-marker deepdive-gantt-marker-${kind}" style="left:${LABEL_WIDTH + ((ms - rangeStartMs) / DAY_MS) * GANTT_PX_PER_DAY}px;"><span class="deepdive-gantt-marker-tag">${escapeHtml(label)}</span></div>`
+        : "";
+    const nowMs = Date.now();
+    const markersHtml =
+      markerHtml(nowMs, "Today", "today") +
+      (gateInfo ? markerHtml(gateInfo.dateMs, gateInfo.label, "gate") : "");
+
+    const rowsHtml = bars
+      .map(({ t, startMs, endMs, assumed }) => {
+        const leftPx = ((startMs - rangeStartMs) / DAY_MS) * GANTT_PX_PER_DAY;
+        const widthPx = Math.max(((endMs - startMs) / DAY_MS) * GANTT_PX_PER_DAY, GANTT_MIN_BAR_PX);
+        const statusClass = t.statusType === "done" || t.statusType === "closed" ? "completed" : "active";
+        const startLabel = assumed ? `~${fmtDate(new Date(startMs).toISOString())} (assumed from due date)` : fmtDate(new Date(startMs).toISOString());
+        const tooltip = `${t.name} — ${startLabel} → ${fmtDate(new Date(endMs).toISOString())}${t.status ? ` · ${t.status}` : ""}`;
+        return `
+          <div class="gantt-row">
+            <div class="gantt-row-label">
+              <span class="deepdive-clickup-live-name">${escapeHtml(t.name)}</span>
+            </div>
+            <div class="gantt-row-track" style="width:${timelineWidth}px;">
+              <div class="gantt-bar ${statusClass}${assumed ? " gantt-bar-assumed" : ""}" style="left:${leftPx}px;width:${widthPx}px;" title="${escapeHtml(tooltip)}"></div>
+            </div>
+          </div>`;
+      })
+      .join("");
+
+    return `
+      <div class="deepdive-gantt-scroll">
+        <div class="gantt-inner">
+          <div class="gantt-header" style="width:${LABEL_WIDTH + timelineWidth}px;">
+            <div class="gantt-header-row">
+              <div class="gantt-header-spacer" style="width:${LABEL_WIDTH}px;"></div>
+              <div class="gantt-quarters" style="width:${timelineWidth}px;">${quartersHtml}</div>
+            </div>
+            <div class="gantt-header-row gantt-header-row-months">
+              <div class="gantt-header-spacer" style="width:${LABEL_WIDTH}px;"></div>
+              <div class="gantt-months" style="width:${timelineWidth}px;">${monthsHtml}</div>
+            </div>
+          </div>
+          <div class="gantt-body" style="width:${LABEL_WIDTH + timelineWidth}px;">
+            <div class="gantt-quarter-bands" style="left:${LABEL_WIDTH}px;width:${timelineWidth}px;">${quarterBandsHtml}</div>
+            ${rowsHtml}
+          </div>
+          ${markersHtml}
+        </div>
+      </div>`;
+  }
+
+  function deepDiveTimelineHtml(timeline, project) {
+    return `
+      ${deepDiveClickupLiveHtml(project)}
       <p class="deepdive-section-intro">The phases this project actually moves through -- each with a rough window and a status. Not a synced Gantt; just enough structure to see what's next.</p>
       <div class="deepdive-timeline">
         ${(timeline.phases || []).map((ph) => `
@@ -991,7 +1368,16 @@
 
     document.getElementById("deepdive-close").addEventListener("click", closeDeepDive);
     overlay.addEventListener("click", (e) => { if (e.target === overlay) closeDeepDive(); });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && deepDiveState) closeDeepDive(); });
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      // Innermost overlay closes first -- Escape on the crop tool or
+      // lightbox shouldn't also drop the whole Deep Dive underneath it.
+      const cropOverlay = document.getElementById("crop-overlay");
+      const lightbox = document.getElementById("cover-lightbox-overlay");
+      if (cropOverlay && !cropOverlay.hidden) { closeCoverCropper(); return; }
+      if (lightbox && !lightbox.hidden) { closeCoverLightbox(); return; }
+      if (deepDiveState) closeDeepDive();
+    });
 
     document.getElementById("deepdive-tabs").addEventListener("click", (e) => {
       const btn = e.target.closest(".deepdive-tab");
@@ -1001,30 +1387,34 @@
       renderDeepDiveBody();
     });
 
-    // Icon picker: click the header icon to open a small popover with a
-    // curated emoji grid plus a photo upload (resized client-side before
-    // being stored, so a phone photo doesn't blow past localStorage's quota).
-    const iconBtn = document.getElementById("deepdive-icon-btn");
+    // Emoji picker: "Choose emoji instead" (only shown when there's no cover
+    // photo -- see renderDeepDiveCover) opens a small popover with a curated
+    // emoji grid. Photo upload lives entirely in the cover-actions row now
+    // (one image, not a separate icon-photo path) -- this picker only ever
+    // sets/clears data.icon.emoji.
+    const emojiBtn = document.getElementById("deepdive-cover-emoji-btn");
     const picker = document.getElementById("deepdive-icon-picker");
-    iconBtn.addEventListener("click", () => {
-      if (!deepDiveState) return;
-      if (!picker.hidden) { picker.hidden = true; return; }
-      picker.innerHTML = `
-        <div class="deepdive-icon-grid">
-          ${DEEPDIVE_ICON_CHOICES.map((e) => `<button type="button" class="deepdive-icon-option" data-icon-emoji="${escapeHtml(e)}">${e}</button>`).join("")}
-        </div>
-        <div class="deepdive-icon-picker-row">
-          <label class="deepdive-icon-upload-label">📷 Upload photo<input type="file" id="deepdive-icon-file" accept="image/*" hidden /></label>
-          <button type="button" class="deepdive-icon-reset-btn" id="deepdive-icon-reset">Use category default</button>
-        </div>`;
-      picker.hidden = false;
-    });
+    if (emojiBtn) {
+      emojiBtn.addEventListener("click", () => {
+        if (!deepDiveState) return;
+        if (!picker.hidden) { picker.hidden = true; return; }
+        picker.innerHTML = `
+          <div class="deepdive-icon-grid">
+            ${DEEPDIVE_ICON_CHOICES.map((e) => `<button type="button" class="deepdive-icon-option" data-icon-emoji="${escapeHtml(e)}">${e}</button>`).join("")}
+          </div>
+          <div class="deepdive-icon-picker-row">
+            <button type="button" class="deepdive-icon-reset-btn" id="deepdive-icon-reset">Use category default</button>
+          </div>`;
+        picker.hidden = false;
+      });
+    }
     picker.addEventListener("click", (e) => {
-      const emojiBtn = e.target.closest("[data-icon-emoji]");
-      if (emojiBtn) {
-        deepDiveState.data.icon = { emoji: emojiBtn.dataset.iconEmoji };
+      const emojiOption = e.target.closest("[data-icon-emoji]");
+      if (emojiOption) {
+        deepDiveState.data.icon = { emoji: emojiOption.dataset.iconEmoji };
         persistDeepDiveState();
         renderDeepDiveHeader();
+        renderDeepDiveCover();
         picker.hidden = true;
         return;
       }
@@ -1032,37 +1422,59 @@
         deepDiveState.data.icon = null;
         persistDeepDiveState();
         renderDeepDiveHeader();
+        renderDeepDiveCover();
         picker.hidden = true;
       }
     });
-    picker.addEventListener("change", (e) => {
-      if (e.target.id !== "deepdive-icon-file" || !e.target.files[0]) return;
-      const file = e.target.files[0];
-      const img = new Image();
-      const reader = new FileReader();
-      reader.onload = () => {
-        img.onload = () => {
-          // Downscale to a small square thumbnail before storing -- a raw
-          // phone photo easily runs 3-5MB, which would blow through
-          // localStorage's ~5-10MB-per-origin quota after a handful of
-          // projects; 160px is plenty for a card/header icon.
-          const size = 160;
-          const canvas = document.createElement("canvas");
-          canvas.width = size;
-          canvas.height = size;
-          const ctx = canvas.getContext("2d");
-          const scale = Math.max(size / img.width, size / img.height);
-          const w = img.width * scale, h = img.height * scale;
-          ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
-          deepDiveState.data.icon = { photo: canvas.toDataURL("image/jpeg", 0.82) };
-          persistDeepDiveState();
-          renderDeepDiveHeader();
-          picker.hidden = true;
+
+    // Cover photo -- the one image for this project. A fresh upload (or
+    // "Recrop" on the existing photo) opens the crop tool (wireCoverCropper
+    // below) rather than saving a plain resize immediately; that tool's own
+    // "Save photo" is what actually writes deepDiveState.data.coverPhoto,
+    // rendered at a 1600x1600 cap. This same file is what's reused
+    // everywhere else as the thumbnail (deepDiveIconHtml).
+    const coverFile = document.getElementById("deepdive-cover-file");
+    const coverRemoveBtn = document.getElementById("deepdive-cover-remove");
+    const coverRecropBtn = document.getElementById("deepdive-cover-recrop");
+    if (coverFile) {
+      coverFile.addEventListener("change", (e) => {
+        const file = e.target.files[0];
+        if (!file || !deepDiveState) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          openCoverCropper(reader.result);
+          coverFile.value = "";
         };
-        img.src = reader.result;
-      };
-      reader.readAsDataURL(file);
-    });
+        reader.readAsDataURL(file);
+      });
+    }
+    if (coverRecropBtn) {
+      coverRecropBtn.addEventListener("click", () => {
+        if (!deepDiveState || !deepDiveState.data.coverPhoto) return;
+        openCoverCropper(deepDiveState.data.coverPhoto);
+      });
+    }
+    if (coverRemoveBtn) {
+      coverRemoveBtn.addEventListener("click", () => {
+        if (!deepDiveState) return;
+        deepDiveState.data.coverPhoto = null;
+        persistDeepDiveState();
+        renderDeepDiveCover();
+      });
+    }
+
+    // Clicking the cover (when a photo is set -- emoji fallback isn't worth
+    // a lightbox) opens it full-size instead of squeezed into the ~180px
+    // header tile.
+    const coverBtn = document.getElementById("deepdive-cover");
+    if (coverBtn) {
+      coverBtn.addEventListener("click", () => {
+        if (!deepDiveState || !deepDiveState.data.coverPhoto) return;
+        openCoverLightbox(deepDiveState.data.coverPhoto);
+      });
+    }
+    wireCoverLightbox();
+    wireCoverCropper();
 
     const body = document.getElementById("deepdive-body");
     body.addEventListener("click", (e) => {
@@ -1112,6 +1524,197 @@
     }
     body.addEventListener("input", applyFieldEdit);
     body.addEventListener("change", applyFieldEdit);
+  }
+
+  // ---- Cover photo lightbox -------------------------------------------
+
+  function openCoverLightbox(dataUrl) {
+    const overlay = document.getElementById("cover-lightbox-overlay");
+    const img = document.getElementById("cover-lightbox-img");
+    if (!overlay || !img) return;
+    img.src = dataUrl;
+    overlay.hidden = false;
+  }
+  function closeCoverLightbox() {
+    const overlay = document.getElementById("cover-lightbox-overlay");
+    if (overlay) overlay.hidden = true;
+  }
+  function wireCoverLightbox() {
+    const overlay = document.getElementById("cover-lightbox-overlay");
+    const closeBtn = document.getElementById("cover-lightbox-close");
+    if (!overlay) return;
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) closeCoverLightbox(); });
+    if (closeBtn) closeBtn.addEventListener("click", closeCoverLightbox);
+  }
+
+  // ---- Cover photo crop tool -------------------------------------------
+  // A minimal drag-to-reposition + slider-to-zoom cropper: no library, just
+  // pointer events on a fixed square viewport (#crop-viewport) and a CSS
+  // transform (translate + scale, transform-origin 0 0) on the <img> inside
+  // it. cropState tracks the current transform in *displayed* pixels so
+  // drag/zoom math stays simple; "Save photo" converts that back into the
+  // image's natural pixel coordinates to render the actual crop.
+
+  function cropClamp(tx, ty, scale) {
+    const dw = cropState.naturalW * scale;
+    const dh = cropState.naturalH * scale;
+    const v = cropState.viewportSize;
+    // Image always covers the viewport at every zoom level (baseScale
+    // guarantees that at zoom 1), so tx/ty only ever need to keep the
+    // image's edges outside the viewport's edges -- never centered gaps.
+    return {
+      tx: Math.min(0, Math.max(v - dw, tx)),
+      ty: Math.min(0, Math.max(v - dh, ty)),
+    };
+  }
+
+  function cropApplyTransform() {
+    const img = document.getElementById("crop-img");
+    if (!img || !cropState) return;
+    img.style.width = `${cropState.naturalW}px`;
+    img.style.height = `${cropState.naturalH}px`;
+    img.style.transform = `translate(${cropState.tx}px, ${cropState.ty}px) scale(${cropState.scale})`;
+  }
+
+  function openCoverCropper(sourceDataUrl) {
+    const overlay = document.getElementById("crop-overlay");
+    const img = document.getElementById("crop-img");
+    const zoomInput = document.getElementById("crop-zoom");
+    const viewport = document.getElementById("crop-viewport");
+    if (!overlay || !img || !viewport) return;
+    overlay.hidden = false;
+    img.removeAttribute("style");
+
+    let done = false;
+    const finishSetup = () => {
+      if (done) return; // guard against both the cache-hit check below AND a load event firing
+      done = true;
+      const naturalW = img.naturalWidth;
+      const naturalH = img.naturalHeight;
+      if (!naturalW || !naturalH) {
+        // A corrupt/unreadable file can still fire "load" with zero
+        // dimensions rather than "error" -- bail out cleanly instead of
+        // dividing by zero into an Infinity scale.
+        closeCoverCropper();
+        window.alert("That file couldn't be read as an image. Try a different photo.");
+        return;
+      }
+      const viewportSize = viewport.clientWidth || 320;
+      const baseScale = viewportSize / Math.min(naturalW, naturalH);
+      cropState = {
+        naturalW,
+        naturalH,
+        viewportSize,
+        baseScale,
+        scale: baseScale,
+        tx: (viewportSize - naturalW * baseScale) / 2,
+        ty: (viewportSize - naturalH * baseScale) / 2,
+        dragging: false,
+      };
+      const clamped = cropClamp(cropState.tx, cropState.ty, cropState.scale);
+      cropState.tx = clamped.tx;
+      cropState.ty = clamped.ty;
+      if (zoomInput) zoomInput.value = "1";
+      cropApplyTransform();
+    };
+    img.onload = finishSetup;
+    img.src = sourceDataUrl;
+    // Re-opening the cropper on the exact same dataURL (e.g. "Recrop" on an
+    // already-saved photo, opened twice in one session) can mean the <img>
+    // element's src doesn't actually change, and some browsers won't refire
+    // "load" for that -- so if the image is already fully decoded by the
+    // time we get here, run setup immediately instead of waiting for an
+    // event that may never come. finishSetup's own guard keeps this from
+    // double-running if onload does still fire.
+    if (img.complete && img.naturalWidth > 0) finishSetup();
+  }
+
+  function closeCoverCropper() {
+    const overlay = document.getElementById("crop-overlay");
+    if (overlay) overlay.hidden = true;
+    cropState = null;
+  }
+
+  function wireCoverCropper() {
+    const overlay = document.getElementById("crop-overlay");
+    const viewport = document.getElementById("crop-viewport");
+    const zoomInput = document.getElementById("crop-zoom");
+    const cancelBtn = document.getElementById("crop-cancel");
+    const saveBtn = document.getElementById("crop-save");
+    if (!overlay || !viewport) return;
+
+    viewport.addEventListener("pointerdown", (e) => {
+      if (!cropState) return;
+      cropState.dragging = true;
+      cropState.startX = e.clientX;
+      cropState.startY = e.clientY;
+      cropState.startTx = cropState.tx;
+      cropState.startTy = cropState.ty;
+      viewport.classList.add("crop-dragging");
+      viewport.setPointerCapture(e.pointerId);
+    });
+    viewport.addEventListener("pointermove", (e) => {
+      if (!cropState || !cropState.dragging) return;
+      const dx = e.clientX - cropState.startX;
+      const dy = e.clientY - cropState.startY;
+      const clamped = cropClamp(cropState.startTx + dx, cropState.startTy + dy, cropState.scale);
+      cropState.tx = clamped.tx;
+      cropState.ty = clamped.ty;
+      cropApplyTransform();
+    });
+    const endDrag = (e) => {
+      if (!cropState) return;
+      cropState.dragging = false;
+      viewport.classList.remove("crop-dragging");
+      if (e && e.pointerId != null && viewport.hasPointerCapture && viewport.hasPointerCapture(e.pointerId)) {
+        viewport.releasePointerCapture(e.pointerId);
+      }
+    };
+    viewport.addEventListener("pointerup", endDrag);
+    viewport.addEventListener("pointercancel", endDrag);
+
+    if (zoomInput) {
+      zoomInput.addEventListener("input", () => {
+        if (!cropState) return;
+        const z = Number(zoomInput.value) || 1;
+        const newScale = cropState.baseScale * z;
+        // Zoom around the viewport's center rather than its top-left corner
+        // -- keeps whatever's currently centered roughly in place instead
+        // of jumping toward the image's origin on every zoom step.
+        const v = cropState.viewportSize;
+        const centerImgX = (v / 2 - cropState.tx) / cropState.scale;
+        const centerImgY = (v / 2 - cropState.ty) / cropState.scale;
+        const newTx = v / 2 - centerImgX * newScale;
+        const newTy = v / 2 - centerImgY * newScale;
+        const clamped = cropClamp(newTx, newTy, newScale);
+        cropState.scale = newScale;
+        cropState.tx = clamped.tx;
+        cropState.ty = clamped.ty;
+        cropApplyTransform();
+      });
+    }
+
+    if (cancelBtn) cancelBtn.addEventListener("click", closeCoverCropper);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) closeCoverCropper(); });
+
+    if (saveBtn) {
+      saveBtn.addEventListener("click", () => {
+        if (!cropState || !deepDiveState) return;
+        const img = document.getElementById("crop-img");
+        const OUTPUT = 1600;
+        const sx = -cropState.tx / cropState.scale;
+        const sy = -cropState.ty / cropState.scale;
+        const sSize = cropState.viewportSize / cropState.scale;
+        const canvas = document.createElement("canvas");
+        canvas.width = OUTPUT;
+        canvas.height = OUTPUT;
+        canvas.getContext("2d").drawImage(img, sx, sy, sSize, sSize, 0, 0, OUTPUT, OUTPUT);
+        deepDiveState.data.coverPhoto = canvas.toDataURL("image/jpeg", 0.88);
+        persistDeepDiveState();
+        renderDeepDiveCover();
+        closeCoverCropper();
+      });
+    }
   }
 
   // ---- projects: table -------------------------------------------
@@ -1646,7 +2249,16 @@
     if (weekLabel) weekLabel.textContent = currentWeekRangeLabel();
     renderWeeklyStatusFilters(data);
 
-    const cards = data.projects.map(weeklyCardHtml).filter(Boolean);
+    // Projects with actual movement this week (a WBS tree or a flat update)
+    // float to the top, ahead of ones showing "Nothing starting or due this
+    // week yet" -- so a PM scanning for team-prioritization decisions sees
+    // the projects that need attention first instead of hunting past a wall
+    // of empty cards. A stable sort keeps ClickUp's own ordering within each
+    // group rather than re-shuffling projects that are equally "busy."
+    const hasWeekContent = (p) => (Array.isArray(p.tree) && p.tree.length > 0) || (Array.isArray(p.updates) && p.updates.length > 0);
+    const orderedProjects = [...data.projects].sort((a, b) => Number(hasWeekContent(b)) - Number(hasWeekContent(a)));
+
+    const cards = orderedProjects.map(weeklyCardHtml).filter(Boolean);
     const filterNote = weeklyStatusFilter ? ` · filtered to "${weeklyStatusFilter}"` : "";
     total.textContent = weeklyStatusFilter
       ? `${cards.length} of ${data.totalActive} active project${data.totalActive === 1 ? "" : "s"}${filterNote}`
@@ -1662,6 +2274,218 @@
     list.innerHTML = cards.join("");
   }
 
+  // ---- Weekly Activity: local (non-ClickUp) dated items --------------------
+  // Tooling/Lab tasks and Checklist items are local-only (they never touch
+  // ClickUp), and Idea Dumps lives in its own separate ClickUp intake list --
+  // none of that shows up in the ClickUp-sourced /api/weekly response above.
+  // This scans every project's local task/checklist storage for anything
+  // carrying a due date inside the current Monday-Sunday window, plus fetches
+  // Idea Dumps submissions and filters the same way, so "what's open this
+  // week" isn't limited to what happens to live on the Active ClickUp list.
+  function isIsoInCurrentWeek(iso) {
+    if (!iso) return false;
+    const ms = Date.parse(iso);
+    if (Number.isNaN(ms)) return false;
+    const now = new Date();
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    monday.setDate(monday.getDate() - ((now.getDay() + 6) % 7));
+    const nextMonday = new Date(monday);
+    nextMonday.setDate(monday.getDate() + 7);
+    return ms >= monday.getTime() && ms < nextMonday.getTime();
+  }
+
+  function collectLocalWeeklyItems() {
+    const items = [];
+    allProjects.forEach((p) => {
+      getProjectTasks(p.id).forEach((t) => {
+        if (!t.done && isIsoInCurrentWeek(t.dueDate)) {
+          items.push({ source: "Tooling/Lab", projectName: p.name, text: t.text, dueDate: t.dueDate });
+        }
+      });
+      const checklistData = getCustomChecklistData(p.id);
+      Object.keys(checklistData).forEach((sectionKey) => {
+        (checklistData[sectionKey] || []).forEach((it) => {
+          if (!it.checked && isIsoInCurrentWeek(it.dueDate)) {
+            items.push({ source: "Checklist", projectName: p.name, text: it.text, dueDate: it.dueDate });
+          }
+        });
+      });
+    });
+    return items;
+  }
+
+  async function loadIdeaWeeklyItems() {
+    try {
+      const res = await fetch("/api/ideas");
+      const data = await res.json();
+      const ideas = data.ideas || [];
+      return ideas
+        .filter((idea) => isIsoInCurrentWeek(idea.dueDate))
+        .map((idea) => ({ source: "Idea Dump", projectName: null, text: idea.name, dueDate: idea.dueDate }));
+    } catch {
+      return [];
+    }
+  }
+
+  function weeklyOtherItemHtml(item) {
+    const urgency = item.dueDate ? dateUrgencyInfo(item.dueDate) : null;
+    return `
+      <li class="weekly-other-item">
+        <span class="weekly-other-source">${escapeHtml(item.source)}</span>
+        ${item.projectName ? `<span class="weekly-other-project">${escapeHtml(item.projectName)}</span>` : ""}
+        <span class="weekly-other-text">${escapeHtml(item.text)}</span>
+        ${urgency ? `<span class="reason-chip ${urgency.cls}">${escapeHtml(urgency.label)}</span>` : ""}
+      </li>`;
+  }
+
+  async function renderWeeklyOtherItems() {
+    const panel = document.getElementById("weekly-other-panel");
+    const list = document.getElementById("weekly-other-list");
+    if (!panel || !list) return;
+    const local = collectLocalWeeklyItems();
+    const ideaItems = await loadIdeaWeeklyItems();
+    const all = [...local, ...ideaItems].sort((a, b) => Date.parse(a.dueDate) - Date.parse(b.dueDate));
+    if (all.length === 0) {
+      panel.hidden = true;
+      list.innerHTML = "";
+      return;
+    }
+    panel.hidden = false;
+    list.innerHTML = all.map(weeklyOtherItemHtml).join("");
+  }
+
+  // Product Backlog -- open ClickUp tasks with NEITHER a start_date NOR a
+  // due_date, per project. These can never land on a weekly card (nothing to
+  // scope them into a week) or in "Other open items this week" (nothing
+  // dated), so without this they were simply invisible on Weekly Activity --
+  // sourced from the same per-project openTasks /api/weekly already returns
+  // (see flattenOpenTasks in transform.js, which now carries dueDate/
+  // startDate through). Collapsed by default since a real backlog can run
+  // long; the count badge on the summary gives the total without opening it.
+  // Local-only star/highlight so a PM can flag which backlog items actually
+  // matter without writing anything to ClickUp -- these are, by definition,
+  // tasks nobody has scheduled yet, so a flag here is a note-to-self, not a
+  // status change. Starred items sort to the top of their project group.
+  const BACKLOG_STARS_KEY = "pm-dashboard-backlog-stars";
+  function loadBacklogStars() {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(BACKLOG_STARS_KEY) || "[]"));
+    } catch {
+      return new Set();
+    }
+  }
+  function saveBacklogStars(set) {
+    try {
+      localStorage.setItem(BACKLOG_STARS_KEY, JSON.stringify([...set]));
+    } catch {
+      // Storage can be unavailable (private browsing, quota) -- starring
+      // just won't persist across reloads in that case, nothing to surface.
+    }
+  }
+
+  function renderWeeklyBacklog(data) {
+    const panel = document.getElementById("weekly-backlog-panel");
+    const groupsEl = document.getElementById("weekly-backlog-groups");
+    const countEl = document.getElementById("weekly-backlog-count");
+    if (!panel || !groupsEl) return;
+    const stars = loadBacklogStars();
+    const projects = (data && data.projects) || [];
+    const groups = projects
+      .map((p) => {
+        const items = (p.openTasks || []).filter((t) => t.statusType !== "done" && !t.dueDate && !t.startDate);
+        items.sort((a, b) => Number(stars.has(b.id)) - Number(stars.has(a.id)));
+        return { name: p.name, items };
+      })
+      .filter((g) => g.items.length > 0);
+    const total = groups.reduce((sum, g) => sum + g.items.length, 0);
+    if (countEl) countEl.textContent = String(total);
+    if (total === 0) {
+      panel.hidden = true;
+      groupsEl.innerHTML = "";
+      return;
+    }
+    panel.hidden = false;
+    groupsEl.innerHTML = groups
+      .map(
+        (g) => `
+      <div class="weekly-backlog-group">
+        <div class="weekly-backlog-group-title">${escapeHtml(g.name)}</div>
+        <ul class="weekly-backlog-list">
+          ${g.items
+            .map((t) => {
+              const starred = stars.has(t.id);
+              return `
+              <li class="weekly-backlog-item${starred ? " weekly-backlog-item-starred" : ""}">
+                <button type="button" class="weekly-backlog-star" data-star-task="${escapeHtml(t.id)}" aria-pressed="${starred}" title="${starred ? "Unstar" : "Star as a priority"}">${starred ? "★" : "☆"}</button>
+                <span class="weekly-backlog-item-name">${escapeHtml(t.name)}</span>
+                <span class="weekly-backlog-date-form" data-task="${escapeHtml(t.id)}">
+                  <input type="date" class="weekly-backlog-date-input" aria-label="Set a date for ${escapeHtml(t.name)}" />
+                  <button type="button" class="weekly-backlog-date-save action-btn">Set date</button>
+                  <span class="weekly-backlog-status"></span>
+                </span>
+              </li>`;
+            })
+            .join("")}
+        </ul>
+      </div>`
+      )
+      .join("");
+    wireWeeklyBacklogControls();
+  }
+
+  function wireWeeklyBacklogControls() {
+    document.querySelectorAll("#weekly-backlog-groups .weekly-backlog-star").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const taskId = btn.dataset.starTask;
+        const stars = loadBacklogStars();
+        if (stars.has(taskId)) stars.delete(taskId);
+        else stars.add(taskId);
+        saveBacklogStars(stars);
+        renderWeeklyBacklog(weeklyData);
+      });
+    });
+    document.querySelectorAll("#weekly-backlog-groups .weekly-backlog-date-form").forEach((form) => {
+      const taskId = form.dataset.task;
+      const input = form.querySelector(".weekly-backlog-date-input");
+      const saveBtn = form.querySelector(".weekly-backlog-date-save");
+      const statusEl = form.querySelector(".weekly-backlog-status");
+      saveBtn.addEventListener("click", () => saveBacklogDate(taskId, input.value, statusEl));
+    });
+  }
+
+  // Setting a date here writes the real ClickUp task's due date (via the
+  // same /api/gap-update endpoint the Decisions & Gaps tab already uses --
+  // see saveGapField), which is what makes it "not undated" -- so on
+  // success it naturally drops out of this backlog and starts showing up in
+  // Weekly Activity / the Deep Dive Timeline feed instead. Re-runs
+  // loadWeekly() (not the full load()) since Product Backlog and Weekly
+  // Activity both come from /api/weekly and nothing else needs refreshing.
+  async function saveBacklogDate(taskId, value, statusEl) {
+    if (!value) return;
+    statusEl.textContent = "Saving…";
+    statusEl.className = "weekly-backlog-status";
+    try {
+      const res = await fetch("/api/gap-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId, field: "dueDate", value }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || "Save failed");
+      if (data.preview) {
+        statusEl.textContent = "Preview mode — not saved";
+        statusEl.className = "weekly-backlog-status weekly-backlog-status-info";
+        return;
+      }
+      statusEl.textContent = "Saved ✓ moving to Weekly Activity…";
+      statusEl.className = "weekly-backlog-status weekly-backlog-status-ok";
+      await loadWeekly();
+    } catch (err) {
+      statusEl.textContent = err.message || "Save failed";
+      statusEl.className = "weekly-backlog-status weekly-backlog-status-error";
+    }
+  }
+
   async function loadWeekly() {
     const total = document.getElementById("weekly-total");
     total.textContent = "Loading…";
@@ -1670,6 +2494,8 @@
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       renderWeekly(data);
+      renderWeeklyOtherItems();
+      renderWeeklyBacklog(data);
       weeklyLoaded = true;
     } catch (err) {
       total.textContent = "Error loading weekly activity";
@@ -1717,6 +2543,35 @@
     return out;
   }
 
+  // Re-encodes a dataURL image at a smaller size/quality -- used to shrink
+  // full-size (1600px-edge) cover photos before they're embedded in the
+  // PPTX export payload, since that deck only ever shows them at ~0.6in
+  // and sending several full-size photos in one POST body would bloat it
+  // for no visible benefit. Falls back to the original dataURL if decoding
+  // fails for any reason (e.g. a corrupt/unsupported image), so a bad photo
+  // never blocks the export.
+  function downscaleDataUrl(dataUrl, maxEdge, quality) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        try {
+          resolve(canvas.toDataURL("image/jpeg", quality));
+        } catch {
+          resolve(dataUrl);
+        }
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    });
+  }
+
   function buildStandupSummaryData() {
     const portfolio = window.__portfolioData;
     const weeklyProjects = weeklyData?.projects || [];
@@ -1733,7 +2588,20 @@
             status: u.status || "",
             isParent: false,
           }));
-      return { name: p.name, gate: p.gate || "", lines };
+      // Pulled from this project's own Deep Dive -- Cost & Resource rows
+      // (team utilization by function) and a one-line Priority summary --
+      // shown above the task list below so the export carries the same
+      // "who's on this and what's the live call" context the (now-removed)
+      // Weekly Priorities tab used to show as a separate table.
+      const fullProject = findProject(p.id);
+      const deepData = fullProject ? loadDeepDive(fullProject) : null;
+      const teamRows = deepData && deepData.costResource ? deepData.costResource.rows || [] : [];
+      const priorityText = deepData ? priorityColumnText(deepData) : "";
+      // Same square photo used as this project's cover/thumbnail everywhere
+      // else (see deepDiveIconHtml) -- carried into the PPTX export too so
+      // the deck is recognizable at a glance instead of text-only.
+      const coverPhoto = deepData && deepData.coverPhoto ? deepData.coverPhoto : null;
+      return { name: p.name, gate: p.gate || "", lines, teamRows, priorityText, coverPhoto };
     });
 
     const { risks } = mergeChecklistRisks(portfolio);
@@ -1764,22 +2632,30 @@
     return `<div class="line${l.isParent ? " parent" : ""}" style="margin-left:${indent}px">${checkbox}<span class="name">${escapeHtml(l.text)}</span>${dueBadge}${statusText}</div>`;
   }
 
-  // Base64 copy of public/assets/ecoa-logo.png, embedded so this exported
-  // file stays a single, fully self-contained HTML document (no relative
-  // asset path that would break once it's saved/emailed elsewhere).
+  // Base64 copy of public/assets/ecoa-mark-header.png (the wordmark-only
+  // crop -- see .brand-logo in style.css for why), embedded so this
+  // exported file stays a single, fully self-contained HTML document (no
+  // relative asset path that would break once it's saved/emailed
+  // elsewhere).
   const ECOA_LOGO_DATA_URI =
-    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAfQAAADICAYAAAAeGRPoAAAWfmNhQlgAABZ+anVtYgAAAB5qdW1kYzJwYQARABCAAACqADibcQNjMnBhAAAAFlhqdW1iAAAAR2p1bWRjMm1hABEAEIAAAKoAOJtxA3VybjpjMnBhOjNjMzk4ZWRmLTNlODctNDJiOS1hMzdmLTQwN2IwODI4MjQ4YQAAAAOTanVtYgAAAClqdW1kYzJhcwARABCAAACqADibcQNjMnBhLmFzc2VydGlvbnMAAAAAuGp1bWIAAABEanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5pbmdyZWRpZW50LnYzAAAAABhjMnNoHnQCuPy5XcyVF48QY3snhAAAAGxjYm9yo2lkYzpmb3JtYXRpaW1hZ2UvcG5namluc3RhbmNlSUR4LHhtcDppaWQ6ZjcyNDhiNTYtM2QzZC00YzNlLWEyN2YtZDU0NTA2NjJiMTNmbHJlbGF0aW9uc2hpcGhwYXJlbnRPZgAAAeJqdW1iAAAAQWp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuYWN0aW9ucy52MgAAAAAYYzJzaPG5JT/025l+LKFVhZm3g+AAAAGZY2JvcqJnYWN0aW9uc4KiZmFjdGlvbmtjMnBhLm9wZW5lZGpwYXJhbWV0ZXJzoWtpbmdyZWRpZW50c4GiY3VybHgtc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5pbmdyZWRpZW50LnYzZGhhc2hYIE4HNmLzGjzzFB6yVz+ld/3zQsvDZhEWiTLTtEnqq60upGZhY3Rpb254HWNvbS5hbnRocm9waWMuY2xhdWRlLnByb3ZpZGVkanBhcmFtZXRlcnOheB9jb20uYW50aHJvcGljLm9yaWdpbi1jb25maWRlbmNlZ3Vua25vd25rZGVzY3JpcHRpb254ZkNsYXVkZSBwcm92aWRlZCB0aGlzIGZpbGUgYXQgdGhlIHJlcXVlc3Qgb2YgYSB1c2VyIGFuZCBtYXkgaGF2ZSBjcmVhdGVkIG9yIG1vZGlmaWVkIHRoZSBmaWxlIGNvbnRlbnRzLm1zb2Z0d2FyZUFnZW50oWRuYW1lZkNsYXVkZXJhbGxBY3Rpb25zSW5jbHVkZWT1AAAAyGp1bWIAAABAanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5oYXNoLmRhdGEAAAAAGGMyc2homGyzGiqE93PVRR0sFLGmAAAAgGNib3KlY2FsZ2ZzaGEyNTZjcGFkTQAAAAAAAAAAAAAAAABkaGFzaFggZNbC/h8uPCbvTPiDvyB9/QTd9Y/1aT3TbTjok7pwLOdkbmFtZW5qdW1iZiBtYW5pZmVzdGpleGNsdXNpb25zgaJlc3RhcnQYIWZsZW5ndGgZFooAAAI+anVtYgAAACdqdW1kYzJjbAARABCAAACqADibcQNjMnBhLmNsYWltLnYyAAAAAg9jYm9ypWNhbGdmc2hhMjU2aXNpZ25hdHVyZXhNc2VsZiNqdW1iZj0vYzJwYS91cm46YzJwYTozYzM5OGVkZi0zZTg3LTQyYjktYTM3Zi00MDdiMDgyODI0OGEvYzJwYS5zaWduYXR1cmVqaW5zdGFuY2VJRHgseG1wOmlpZDo5MjNjNTJkZS1kMDhmLTRkZWMtOWYzYy0yMDg2ZGFhZjA5MzdyY3JlYXRlZF9hc3NlcnRpb25zg6JjdXJseC1zZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmluZ3JlZGllbnQudjNkaGFzaFggTgc2YvMaPPMUHrJXP6V3/fNCy8NmERaJMtO0SeqrrS6iY3VybHgqc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5hY3Rpb25zLnYyZGhhc2hYIIbFeLJuhavOjqS/assVYMx5eoLRG3zfY/uqENVDWWeWomN1cmx4KXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaGFzaC5kYXRhZGhhc2hYIP/DFozqhjOyLPmwT9jEcL0xLFzQlvB2ni8j5aei+gM4dGNsYWltX2dlbmVyYXRvcl9pbmZvo2RuYW1lb0FudGhyb3BpYyBGaWxlc2d2ZXJzaW9uZTEuMC4wa3NwZWNWZXJzaW9uZTIuNC4wAAAQOGp1bWIAAAAoanVtZGMyY3MAEQAQgAAAqgA4m3EDYzJwYS5zaWduYXR1cmUAAAAQCGNib3LShFkCEqIBJhghWQIKMIICBjCCAY2gAwIBAgIUQOWgCu7COdC+uIP6BkIFPWdVEwAwCgYIKoZIzj0EAwMwSTEXMBUGA1UEChMOQW50aHJvcGljLCBQQkMxLjAsBgNVBAMTJUFudGhyb3BpYyBDb250ZW50IENyZWRlbnRpYWxzIFJvb3QgQ0EwHhcNMjYwODA3MTg0MzU2WhcNMjgwODA2MTk0MzU2WjBEMRcwFQYDVQQKEw5BbnRocm9waWMsIFBCQzEpMCcGA1UEAxMgQW50aHJvcGljIENsYXVkZSBDb250ZW50IFNpZ25pbmcwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASYegpry1AYBRTVNL1CpTlbROnY3dey+UrsF9C3phYrATN3ZHf93Mo8RQN0KOUuOn19P4oWNFWe5n2/She9N7eTo1gwVjAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lBA4wDAYKKwYBBAGD6F4CATAMBgNVHRMBAf8EAjAAMB8GA1UdIwQYMBaAFM5R4gSBTmRbI/jjxM+aPpzB11zCMAoGCCqGSM49BAMDA2cAMGQCMDFzHRSeAXrSy1WOzkbhPZ6Km2wGTmZ/2gK18k8BQGXyqz88Rdrz6CTX9flAnYNVxgIwcF9c3fVhqmJKpi+UhasNUMko69cyX6STPfta3Q8EjyzDjzoyrol46FP6VFHhvUcJoWNwYWRZDZ4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2WEAsy6sqzKJzOQTv8EnUvRgth7SfNMdCrnmlzKojRtRaa/hUJAxYglKqPNBv0WshI+EmaBlwa30rFa9SshhAE5bFkPJi9wAAAAlwSFlzAAAOxAAADsQBlSsOGwAABPRpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADx4OnhtcG1ldGEgeG1sbnM6eD0nYWRvYmU6bnM6bWV0YS8nPgogICAgICAgIDxyZGY6UkRGIHhtbG5zOnJkZj0naHR0cDovL3d3dy53My5vcmcvMTk5OS8wMi8yMi1yZGYtc3ludGF4LW5zIyc+CgogICAgICAgIDxyZGY6RGVzY3JpcHRpb24gcmRmOmFib3V0PScnCiAgICAgICAgeG1sbnM6ZGM9J2h0dHA6Ly9wdXJsLm9yZy9kYy9lbGVtZW50cy8xLjEvJz4KICAgICAgICA8ZGM6dGl0bGU+CiAgICAgICAgPHJkZjpBbHQ+CiAgICAgICAgPHJkZjpsaSB4bWw6bGFuZz0neC1kZWZhdWx0Jz5PbmxpbmUgU2hvcCAtIDI8L3JkZjpsaT4KICAgICAgICA8L3JkZjpBbHQ+CiAgICAgICAgPC9kYzp0aXRsZT4KICAgICAgICA8L3JkZjpEZXNjcmlwdGlvbj4KCiAgICAgICAgPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9JycKICAgICAgICB4bWxuczpBdHRyaWI9J2h0dHA6Ly9ucy5hdHRyaWJ1dGlvbi5jb20vYWRzLzEuMC8nPgogICAgICAgIDxBdHRyaWI6QWRzPgogICAgICAgIDxyZGY6U2VxPgogICAgICAgIDxyZGY6bGkgcmRmOnBhcnNlVHlwZT0nUmVzb3VyY2UnPgogICAgICAgIDxBdHRyaWI6Q3JlYXRlZD4yMDI0LTEwLTE3PC9BdHRyaWI6Q3JlYXRlZD4KICAgICAgICA8QXR0cmliOkV4dElkPjgzNGI0ZDA4LWMzMjMtNGViZi1hZGExLWViMmU5OWIwZWE4MjwvQXR0cmliOkV4dElkPgogICAgICAgIDxBdHRyaWI6RmJJZD41MjUyNjU5MTQxNzk1ODA8L0F0dHJpYjpGYklkPgogICAgICAgIDxBdHRyaWI6VG91Y2hUeXBlPjI8L0F0dHJpYjpUb3VjaFR5cGU+CiAgICAgICAgPC9yZGY6bGk+CiAgICAgICAgPC9yZGY6U2VxPgogICAgICAgIDwvQXR0cmliOkFkcz4KICAgICAgICA8L3JkZjpEZXNjcmlwdGlvbj4KCiAgICAgICAgPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9JycKICAgICAgICB4bWxuczpwZGY9J2h0dHA6Ly9ucy5hZG9iZS5jb20vcGRmLzEuMy8nPgogICAgICAgIDxwZGY6QXV0aG9yPlJ1aGkgU3V0dGFyd2FsYTwvcGRmOkF1dGhvcj4KICAgICAgICA8L3JkZjpEZXNjcmlwdGlvbj4KCiAgICAgICAgPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9JycKICAgICAgICB4bWxuczp4bXA9J2h0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC8nPgogICAgICAgIDx4bXA6Q3JlYXRvclRvb2w+Q2FudmEgKFJlbmRlcmVyKTwveG1wOkNyZWF0b3JUb29sPgogICAgICAgIDwvcmRmOkRlc2NyaXB0aW9uPgogICAgICAgIAogICAgICAgIDwvcmRmOlJERj4KICAgICAgICA8L3g6eG1wbWV0YT5MMl9KAABSlklEQVR4nOydeXjcxPnHvw0xSAmhVlJa1oA1mKuUAgFaSJDQiqsUig0FCiXUiehFKVdDD/X8YUhKK46mlHIWqJIthKsF1hQo5dAKLYQ7nC1XGBGwaSGWgRAtYOjv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";
+    "data:image/png;base64,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";
 
   function renderStandupSummaryHtml(data) {
     const projectsHtml = data.projects.length
       ? data.projects
-          .map(
-            (p) => `
+          .map((p) => {
+            const teamHtml = p.teamRows.length
+              ? `<div class="team-info">${p.teamRows.map((r) => `<span class="team-chip">${escapeHtml(r.role || "—")}${r.effort ? ` · ${escapeHtml(r.effort)}` : ""}</span>`).join("")}</div>`
+              : "";
+            const priorityHtml = p.priorityText ? `<div class="priority-info">${escapeHtml(p.priorityText)}</div>` : "";
+            return `
       <div class="project">
         <h3>${escapeHtml(p.name)}${p.gate ? ` <span class="gate">${escapeHtml(p.gate)}</span>` : ""}</h3>
+        ${teamHtml}
+        ${priorityHtml}
         ${p.lines.map(standupLineHtml).join("")}
-      </div>`
-          )
+      </div>`;
+          })
           .join("")
       : `<p class="empty">Nothing starting or due this week across any active project.</p>`;
 
@@ -1838,7 +2714,11 @@
     background: linear-gradient(135deg, #fff5ec, #fdeadb 60%, #fbf7f2);
     border-bottom: 3px solid var(--brand-accent);
   }
-  .doc-header img { width: 34px; height: 34px; border-radius: 9px; flex: none; }
+  /* ECOA_LOGO_DATA_URI is now a wordmark-only crop (~500x117, no forced
+     square box) -- the old 34x34 square squished the previous 2.5:1 lockup
+     image into an illegible smear. height:auto + a fixed width keeps its
+     real proportions. */
+  .doc-header img { width: 118px; height: auto; flex: none; }
   .doc-header .brand-text { display: flex; flex-direction: column; line-height: 1.15; }
   .doc-header .brand-name {
     font-family: 'Outfit', 'Plus Jakarta Sans', system-ui, sans-serif;
@@ -1883,6 +2763,26 @@
     border-radius: 100px;
     padding: 2px 9px;
     margin-left: 4px;
+  }
+  .team-info { margin-bottom: 6px; }
+  .team-chip {
+    display: inline-block;
+    font-size: 11px;
+    color: var(--text-secondary);
+    background: var(--page-bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 100px;
+    padding: 2px 9px;
+    margin: 0 4px 4px 0;
+  }
+  .priority-info {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--brand-accent-deep);
+    background: var(--brand-tint);
+    border-radius: 8px;
+    padding: 5px 10px;
+    margin-bottom: 8px;
   }
   .line { font-size: 13px; padding: 3px 0; color: var(--text-secondary); }
   .line.parent { font-weight: 700; color: var(--text-primary); }
@@ -1956,6 +2856,16 @@
     btn.textContent = "Building…";
     try {
       const data = buildStandupSummaryData();
+      // Shrink cover photos before they go into the POST body -- the deck
+      // only shows them small (see standup-pptx.js), so there's no reason
+      // to ship each project's full 1600px-edge upload.
+      if (data.projects && data.projects.length) {
+        await Promise.all(
+          data.projects.map(async (p) => {
+            if (p.coverPhoto) p.coverPhoto = await downscaleDataUrl(p.coverPhoto, 300, 0.82);
+          })
+        );
+      }
       const res = await fetch("/api/standup-pptx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1997,25 +2907,143 @@
     checklist: "Gate nearing, checklist incomplete (auto)",
   };
 
-  function renderRiskKpis(risks, riskCounts) {
-    const row = document.getElementById("risk-kpi-row");
-    if (!row) return;
-    const tiles = [
-      { label: "Total at risk", value: risks.length, dotClass: "atRisk" },
-      { label: "Behind schedule (auto)", value: riskCounts.schedule || 0, dotClass: "delayed" },
-      { label: "Flagged in ClickUp", value: riskCounts.flagged || 0, dotClass: "atRisk" },
-      { label: "Gate nearing, checklist incomplete (auto)", value: riskCounts.checklist || 0, dotClass: "delayed" },
-      { label: "Needs a mitigation plan", value: riskCounts.needsMitigation || 0, dotClass: "atRisk" },
+  // "Total at risk" used to sit as one tile among five same-size tiles,
+  // several of which (Gate nearing, Needs mitigation plan) could show the
+  // same number as the total -- reading as a mix-up rather than a
+  // breakdown. Now it's a single hero stat with a share-of-live-projects
+  // ring (the same radial-gauge language the workload donut uses), and the
+  // reasons underneath are real proportional bars sized as a breakdown of
+  // THAT number (which can overlap, not competing counts of their own) --
+  // and each bar is a button: clicking it highlights exactly which rows on
+  // the At-risk projects table below it's counting (see
+  // applyRiskReasonFilter). `counts` is data.counts from the portfolio
+  // summary (active/delayed/atRisk/completed/total) -- used only to size
+  // the ring as "at risk" share of live (non-completed) projects; renders
+  // fine without a fill if it's ever missing.
+  const RISK_REASON_MATCHERS = {
+    schedule: (r) => r.source === "schedule",
+    flagged: (r) => r.source === "flagged",
+    // The checklist signal is computed client-side (see
+    // checklistGateRiskFor) and, when merged into an existing flagged row,
+    // survives only as appended text in `reason` (" · <gate> gate ...,
+    // checklist N/M complete") -- there's no separate boolean for it the
+    // way there is for needsMitigation, so matching the literal word is
+    // the same signal renderRisksTable already displays in that column.
+    checklist: (r) => /checklist/i.test(r.reason || ""),
+    needsMitigation: (r) => !!r.needsMitigation,
+  };
+  const RISK_REASON_LABELS = {
+    schedule: "Behind schedule",
+    flagged: "Flagged in ClickUp",
+    checklist: "Gate nearing, checklist incomplete",
+    needsMitigation: "Needs a mitigation plan",
+  };
+  let latestRisks = [];
+  let activeRiskFilter = null;
+
+  function renderRiskKpis(risks, riskCounts, counts) {
+    const heroValue = document.getElementById("risk-hero-value");
+    const reasonRow = document.getElementById("risk-reason-row");
+    const ringFill = document.getElementById("risk-hero-ring-fill");
+    if (!heroValue || !reasonRow) return;
+    latestRisks = risks;
+    heroValue.textContent = String(risks.length);
+
+    if (ringFill) {
+      const R = 52;
+      const CIRC = 2 * Math.PI * R;
+      const liveTotal = counts ? Math.max(0, (counts.total || 0) - (counts.completed || 0)) : 0;
+      const pct = liveTotal > 0 ? Math.min(1, risks.length / liveTotal) : 0;
+      ringFill.setAttribute("stroke-dasharray", `${CIRC}`);
+      ringFill.setAttribute("stroke-dashoffset", `${CIRC * (1 - pct)}`);
+    }
+
+    const reasons = [
+      { key: "schedule", label: RISK_REASON_LABELS.schedule + " (auto)", value: riskCounts.schedule || 0, dotClass: "delayed" },
+      { key: "flagged", label: RISK_REASON_LABELS.flagged, value: riskCounts.flagged || 0, dotClass: "atRisk" },
+      { key: "checklist", label: RISK_REASON_LABELS.checklist + " (auto)", value: riskCounts.checklist || 0, dotClass: "delayed" },
+      { key: "needsMitigation", label: RISK_REASON_LABELS.needsMitigation, value: riskCounts.needsMitigation || 0, dotClass: "atRisk" },
     ];
-    row.innerHTML = tiles
-      .map(
-        (t) => `
-        <div class="stat-tile stat-tile-static">
-          <div class="stat-label"><span class="status-dot ${t.dotClass}"></span>${escapeHtml(t.label)}</div>
-          <div class="stat-value">${t.value}</div>
-        </div>`
-      )
+    const scaleMax = Math.max(1, risks.length);
+    reasonRow.innerHTML = reasons
+      .map((r) => {
+        const pct = Math.round((r.value / scaleMax) * 100);
+        const isActive = activeRiskFilter === r.key;
+        return `
+        <button type="button" class="risk-reason-bar${isActive ? " risk-reason-bar-active" : ""}" data-reason-key="${r.key}" aria-pressed="${isActive}">
+          <span class="risk-reason-bar-top">
+            <span class="risk-reason-bar-label"><span class="status-dot ${r.dotClass}"></span>${escapeHtml(r.label)}</span>
+            <span class="risk-reason-bar-value">${r.value}</span>
+          </span>
+          <span class="risk-reason-bar-track"><span class="risk-reason-bar-fill ${r.dotClass}" style="width:${pct}%;"></span></span>
+        </button>`;
+      })
       .join("");
+    // Bars are active/pressed-state-correct as of this render; the table
+    // itself is re-highlighted by renderRisks once it rebuilds the rows
+    // (see applyRiskReasonFilter's reapply call there) since this runs
+    // before renderRisksTable does on every renderRisks() pass.
+  }
+
+  // Clicking a reason bar highlights (not filters out) exactly the rows on
+  // the At-risk projects table it's counting -- "captured by this reason"
+  // stays visible in context, just visually receded for the rest, so a PM
+  // can literally see where a number came from instead of just reading it.
+  // Clicking the same bar again clears the highlight; opts.toggle:false
+  // (used by the re-render re-apply above and the Clear button) sets the
+  // filter directly instead of toggling it off.
+  function applyRiskReasonFilter(key, opts = {}) {
+    const toggle = opts.toggle !== false;
+    activeRiskFilter = toggle ? (activeRiskFilter === key ? null : key) : key;
+
+    document.querySelectorAll(".risk-reason-bar").forEach((btn) => {
+      const isActive = !!activeRiskFilter && btn.dataset.reasonKey === activeRiskFilter;
+      btn.classList.toggle("risk-reason-bar-active", isActive);
+      btn.setAttribute("aria-pressed", String(isActive));
+    });
+
+    const banner = document.getElementById("risk-filter-banner");
+    const bannerText = document.getElementById("risk-filter-banner-text");
+    const tbody = document.getElementById("risks-tbody");
+    const rows = tbody ? Array.from(tbody.querySelectorAll("tr[data-risk-id]")) : [];
+
+    if (!activeRiskFilter) {
+      rows.forEach((row) => row.classList.remove("risk-row-match", "risk-row-dim"));
+      if (banner) banner.hidden = true;
+      return;
+    }
+
+    const matcher = RISK_REASON_MATCHERS[activeRiskFilter];
+    const byId = new Map(latestRisks.map((r) => [String(r.id), r]));
+    rows.forEach((row) => {
+      const r = byId.get(row.dataset.riskId);
+      const match = !!(r && matcher(r));
+      row.classList.toggle("risk-row-match", match);
+      row.classList.toggle("risk-row-dim", !match);
+    });
+
+    if (banner && bannerText) {
+      bannerText.textContent = `Highlighting projects captured by "${RISK_REASON_LABELS[activeRiskFilter]}"`;
+      banner.hidden = false;
+    }
+    if (opts.scroll !== false) {
+      document.getElementById("risk-filter-banner")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }
+
+  function setupRiskReasonFilter() {
+    const row = document.getElementById("risk-reason-row");
+    const clearBtn = document.getElementById("risk-filter-clear");
+    if (row) {
+      row.addEventListener("click", (e) => {
+        const btn = e.target.closest(".risk-reason-bar");
+        if (!btn) return;
+        applyRiskReasonFilter(btn.dataset.reasonKey);
+      });
+    }
+    if (clearBtn) {
+      clearBtn.addEventListener("click", () => applyRiskReasonFilter(null, { toggle: false }));
+    }
   }
 
   // A small horizontal bar chart, one bar per health bucket represented
@@ -2062,7 +3090,7 @@
     tbody.innerHTML = risks
       .map(
         (r) => `
-        <tr>
+        <tr data-risk-id="${escapeHtml(String(r.id))}">
           <td><a class="project-link" href="${escapeHtml(r.url || "#")}" target="_blank" rel="noopener">${escapeHtml(r.name)}</a></td>
           <td>${escapeHtml(r.reason)}</td>
           <td><span class="health-pill"><span class="status-dot ${r.healthBucket}"></span>${escapeHtml(HEALTH_LABEL[r.healthBucket] || r.healthBucket)}</span></td>
@@ -2178,9 +3206,14 @@
 
   function renderRisks(data) {
     const { risks, riskCounts } = mergeChecklistRisks(data);
-    renderRiskKpis(risks, riskCounts);
+    renderRiskKpis(risks, riskCounts, data?.counts);
     renderRiskHealthChart(risks);
     renderRisksTable(risks);
+    // The table just got rebuilt from scratch, so any highlight/dim state
+    // an active filter had applied to the old rows is gone -- reapply it
+    // to the fresh ones rather than leaving the filter "on" with nothing
+    // visibly marked.
+    if (activeRiskFilter) applyRiskReasonFilter(activeRiskFilter, { toggle: false, scroll: false });
   }
 
   // ---- Resourcing: workload by person ------------------------------------
@@ -2404,21 +3437,32 @@
   // aid) is slow to appear and unstyled, so this gives an immediate,
   // themed readout of exactly who a sliver belongs to, even when many
   // slivers share the same "long tail" color.
-  function setupDonutHoverTooltip() {
-    const root = document.getElementById("workload-donut-root");
-    const svg = document.getElementById("workload-donut-svg");
+  // Generalized so both the Resources tab's workload donut AND the
+  // Overview tab's Portfolio Mix health donut get the exact same
+  // hover-grows-and-shows-a-tooltip treatment (see .donut-slice's CSS)
+  // instead of the health donut being the one static chart. `formatLabel`
+  // gets the hovered slice's dataset (name/value/pct) and returns the
+  // tooltip's inner HTML, since the two donuts describe their slices
+  // differently ("N live projects" vs. "N projects", one bucket-labeled by
+  // health status rather than by person). The tooltip element itself is
+  // looked up (and created) PER ROOT now, not via one shared global id --
+  // calling this twice for two different roots with the same id would
+  // silently hand the second donut's hover events the first donut's
+  // tooltip element.
+  function setupDonutHoverTooltip(rootId, svgId, formatLabel) {
+    const root = document.getElementById(rootId);
+    const svg = document.getElementById(svgId);
     if (!root || !svg) return;
-    let tooltip = document.getElementById("donut-tooltip");
+    let tooltip = root.querySelector(":scope > .donut-tooltip");
     if (!tooltip) {
       tooltip = document.createElement("div");
-      tooltip.id = "donut-tooltip";
       tooltip.className = "donut-tooltip";
       tooltip.hidden = true;
       root.appendChild(tooltip);
     }
 
     const show = (slice, evt) => {
-      tooltip.innerHTML = `<strong>${escapeHtml(slice.dataset.name)}</strong><br>${escapeHtml(slice.dataset.value)} live project${slice.dataset.value === "1" ? "" : "s"} · ${escapeHtml(slice.dataset.pct)}%`;
+      tooltip.innerHTML = formatLabel(slice.dataset);
       tooltip.hidden = false;
       move(evt);
     };
@@ -2441,6 +3485,11 @@
       if (!e.relatedTarget || !e.relatedTarget.closest || !e.relatedTarget.closest(".donut-slice")) hide();
     });
   }
+
+  const workloadDonutTooltipLabel = (ds) =>
+    `<strong>${escapeHtml(ds.name)}</strong><br>${escapeHtml(ds.value)} live project${ds.value === "1" ? "" : "s"} · ${escapeHtml(ds.pct)}%`;
+  const healthDonutTooltipLabel = (ds) =>
+    `<strong>${escapeHtml(ds.name)}</strong><br>${escapeHtml(ds.value)} project${ds.value === "1" ? "" : "s"} · ${escapeHtml(ds.pct)}%`;
 
   // ---- Resourcing: board by person ---------------------------------------
   // A kanban board -- one column per assignee, one card per live
@@ -2726,11 +3775,49 @@
 
   // ---- New Idea intake ---------------------------------------------------
 
+  let lastLoadedIdeas = [];
+  let editingIdeaId = null; // set while a card's inline edit form is open
+
   function ideaCardHtml(idea, opts = {}) {
     const created = idea.createdAt ? fmtDate(idea.createdAt) : "—";
+    if (idea.id === editingIdeaId) {
+      return `
+        <li>
+          <form class="idea-edit-form" data-idea-id="${escapeHtml(idea.id)}">
+            <div class="form-grid">
+              <label class="form-field">
+                <span class="form-label">Title <span class="required">*</span></span>
+                <input type="text" class="idea-edit-title" value="${escapeHtml(idea.name || "")}" required />
+              </label>
+              <label class="form-field">
+                <span class="form-label">Product / Model <span class="required">*</span></span>
+                <input type="text" class="idea-edit-product" value="${escapeHtml(idea.product || "")}" required />
+              </label>
+              <label class="form-field">
+                <span class="form-label">Product Category <span class="required">*</span></span>
+                <input type="text" class="idea-edit-category" list="idea-category-options" value="${escapeHtml(idea.productCategory || "")}" required />
+              </label>
+              <label class="form-field">
+                <span class="form-label">Target date <span class="optional">(optional)</span></span>
+                <input type="date" class="idea-edit-target-date" value="${escapeHtml((idea.dueDate || "").slice(0, 10))}" />
+              </label>
+            </div>
+            <label class="form-field form-field-wide">
+              <span class="form-label">Description <span class="required">*</span></span>
+              <textarea class="idea-edit-description" rows="4" required>${escapeHtml(idea.descriptionText != null ? idea.descriptionText : idea.description || "")}</textarea>
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="action-btn action-btn-primary">Save changes</button>
+              <button type="button" class="action-btn idea-edit-cancel">Cancel</button>
+              <span class="form-status idea-edit-status"></span>
+            </div>
+          </form>
+        </li>`;
+    }
     return `
       <li>
         <a class="idea-title" href="${escapeHtml(idea.url || "#")}" target="_blank" rel="noopener">${escapeHtml(idea.name)}</a>
+        <button type="button" class="idea-edit-btn" data-idea-edit="${escapeHtml(idea.id)}" title="Edit this submission">Edit</button>
         <div class="idea-meta">Submitted ${created}${idea.dueDate ? ` · Target ${fmtDate(idea.dueDate)}` : ""}</div>
         ${idea.description ? `<div class="idea-desc">${escapeHtml(idea.description)}</div>` : ""}
         ${opts.mockNote ? `<span class="idea-mock-note">${escapeHtml(opts.mockNote)}</span>` : ""}
@@ -2738,6 +3825,7 @@
   }
 
   function renderIdeas(ideas) {
+    lastLoadedIdeas = ideas || [];
     const list = document.getElementById("ideas-list");
     const empty = document.getElementById("ideas-empty");
     if (!ideas || ideas.length === 0) {
@@ -3203,10 +4291,24 @@
     return getCustomChecklistData(projectId)[sectionKey] || [];
   }
 
-  function addCustomChecklistItem(projectId, sectionKey, text) {
+  function addCustomChecklistItem(projectId, sectionKey, text, dueDate) {
     const data = getCustomChecklistData(projectId);
     const list = data[sectionKey] || [];
-    list.push({ id: `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, text, checked: false });
+    list.push({ id: `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, text, checked: false, dueDate: dueDate || "" });
+    data[sectionKey] = list;
+    setCustomChecklistData(projectId, data);
+  }
+
+  // Used by the click-to-edit affordance on checklist items (see
+  // wireChecklistItemEdit) -- updates text and/or dueDate in place without
+  // touching checked state or id.
+  function editCustomChecklistItem(projectId, sectionKey, itemId, changes) {
+    const data = getCustomChecklistData(projectId);
+    const list = data[sectionKey] || [];
+    const item = list.find((it) => it.id === itemId);
+    if (!item) return;
+    if (changes.text !== undefined) item.text = changes.text;
+    if (changes.dueDate !== undefined) item.dueDate = changes.dueDate;
     data[sectionKey] = list;
     setCustomChecklistData(projectId, data);
   }
@@ -3264,16 +4366,18 @@
       .join("");
 
     const customHtml = customItems
-      .map(
-        (it) => `
+      .map((it) => {
+        const urgency = it.dueDate ? dateUrgencyInfo(it.dueDate) : null;
+        return `
             <li class="checklist-item${it.checked ? " checklist-item-done" : ""}">
               <label>
                 <input type="checkbox" data-project="${escapeHtml(p.id)}" data-section="${escapeHtml(sectionKey)}" data-custom-id="${escapeHtml(it.id)}" ${it.checked ? "checked" : ""} />
-                <span>${escapeHtml(it.text)}</span>
+                <span class="checklist-item-text" data-project="${escapeHtml(p.id)}" data-section="${escapeHtml(sectionKey)}" data-custom-id="${escapeHtml(it.id)}" data-editable-text title="Click to edit">${escapeHtml(it.text)}</span>
               </label>
+              ${urgency ? `<span class="reason-chip ${urgency.cls}">${escapeHtml(urgency.label)}</span>` : ""}
               <button type="button" class="checklist-remove-btn" data-project="${escapeHtml(p.id)}" data-remove-custom-section="${escapeHtml(sectionKey)}" data-remove-custom-id="${escapeHtml(it.id)}" title="Remove this item" aria-label="Remove this item">&times;</button>
-            </li>`
-      )
+            </li>`;
+      })
       .join("");
 
     const emptyMessage = isFollowups ? "No follow-up items added yet." : "No items in this section for this project.";
@@ -3290,6 +4394,7 @@
           <ul class="checklist-items">${standardHtml}${customHtml}${noneHtml}</ul>
           <form class="checklist-add-form" data-project="${escapeHtml(p.id)}" data-section="${escapeHtml(sectionKey)}">
             <input type="text" class="checklist-add-input" placeholder="Add an item to this section and press Enter…" maxlength="200" />
+            <input type="date" class="checklist-add-date" aria-label="Optional due date" />
           </form>
           ${nestedHtml}
         </details>`,
@@ -3400,6 +4505,21 @@
     }
     if (empty) empty.hidden = true;
     grid.innerHTML = rows.map(checklistCardHtml).join("");
+  }
+
+  // Reused by the Weekly standup export (see buildStandupSummaryData /
+  // renderStandupSummaryHtml below) to summarize a project's Deep Dive
+  // Priority tab in one line: the first unresolved open question if there is
+  // one (the live "what to choose" decision), else the priority score/notes,
+  // else nothing.
+  function priorityColumnText(data) {
+    const unresolved = ((data.priority && data.priority.questions) || []).filter((q) => !q.resolved);
+    const scoreLabel = data.priority && data.priority.score ? `Priority ${data.priority.score}/5` : "";
+    if (unresolved.length > 0) {
+      return `${scoreLabel ? scoreLabel + " — " : ""}Needs a call: ${unresolved[0].text}`;
+    }
+    if (scoreLabel) return `${scoreLabel}${data.priority.notes ? " — " + data.priority.notes : ""}`;
+    return "";
   }
 
   // ---- Tooling: projects with a live tooling requirement ------------------
@@ -3722,6 +4842,15 @@
     setProjectTasks(projectId, getProjectTasks(projectId).filter((t) => t.id !== taskId));
   }
 
+  function editProjectTask(projectId, taskId, text) {
+    const tasks = getProjectTasks(projectId);
+    const task = tasks.find((t) => t.id === taskId);
+    if (task) {
+      task.text = text;
+      setProjectTasks(projectId, tasks);
+    }
+  }
+
   function projectTasksSummary(projectId) {
     const tasks = getProjectTasks(projectId);
     return { total: tasks.length, open: tasks.filter((t) => !t.done).length };
@@ -3739,11 +4868,48 @@
       <li class="checklist-item${task.done ? " checklist-item-done" : ""}">
         <label>
           <input type="checkbox" data-task-toggle data-project="${escapeHtml(projectId)}" data-task-id="${escapeHtml(task.id)}"${task.done ? " checked" : ""} />
-          <span>${escapeHtml(task.text)}</span>
+          <span class="checklist-item-text" data-project="${escapeHtml(projectId)}" data-task-id="${escapeHtml(task.id)}" data-editable-text title="Click to edit">${escapeHtml(task.text)}</span>
         </label>
         ${urgency ? `<span class="reason-chip ${urgency.cls}">${escapeHtml(urgency.label)}</span>` : ""}
         <button type="button" class="checklist-remove-btn" data-task-remove data-project="${escapeHtml(projectId)}" data-task-id="${escapeHtml(task.id)}" title="Remove task" aria-label="Remove task">&times;</button>
       </li>`;
+  }
+
+  // ---- Shared click-to-edit for task/checklist item text -------------------
+  // One delegated helper used by both the Tooling/Lab task list and the
+  // Checklist custom items below -- clicking an item's text swaps it for an
+  // inline input; Enter or blur commits via `onSave(newText)`, Escape
+  // cancels without saving. `onSave` is responsible for persisting and
+  // re-rendering.
+  function beginInlineTextEdit(span, onSave) {
+    if (!span || span.dataset.editing) return;
+    const original = span.textContent;
+    span.dataset.editing = "true";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "inline-edit-input";
+    input.value = original;
+    input.maxLength = 200;
+    span.replaceWith(input);
+    input.focus();
+    input.select();
+    let done = false;
+    function commit(save) {
+      if (done) return;
+      done = true;
+      const newText = input.value.trim();
+      if (save && newText && newText !== original) {
+        onSave(newText);
+      } else {
+        span.dataset.editing = "";
+        input.replaceWith(span);
+      }
+    }
+    input.addEventListener("blur", () => commit(true));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); commit(true); }
+      else if (e.key === "Escape") { e.preventDefault(); commit(false); }
+    });
   }
 
   function projectTasksRowHtml(projectId, colspan) {
@@ -3809,6 +4975,19 @@
       if (removeBtn) {
         removeProjectTask(removeBtn.dataset.project, removeBtn.dataset.taskId);
         refreshProjectTasksUI(tbody, removeBtn.dataset.project);
+        return;
+      }
+      const editSpan = e.target.closest("[data-editable-text][data-task-id]");
+      if (editSpan) {
+        // Prevent the surrounding <label>'s native click-forwarding from
+        // also toggling the checkbox -- otherwise clicking the text to edit
+        // it would flip the task's done state at the same time.
+        e.preventDefault();
+        const { project, taskId } = editSpan.dataset;
+        beginInlineTextEdit(editSpan, (newText) => {
+          editProjectTask(project, taskId, newText);
+          refreshProjectTasksUI(tbody, project);
+        });
       }
     });
     tbody.addEventListener("change", (e) => {
@@ -4209,7 +5388,8 @@
   setupTabs();
   wireTabDragReorder();
   setupSubtabs();
-  setupDonutHoverTooltip();
+  setupDonutHoverTooltip("workload-donut-root", "workload-donut-svg", workloadDonutTooltipLabel);
+  setupRiskReasonFilter();
   initAllResizableTables();
   setupDeepDive();
 
@@ -4416,6 +5596,67 @@
     }
   });
 
+  // Edit an already-submitted idea in place -- clicking "Edit" on a card
+  // swaps just that card for a form pre-filled from the fields ideas.js
+  // parsed back out of the ClickUp task's description (see
+  // parseIdeaDescription), saving on submit via PUT /api/ideas.
+  const ideasListEl = document.getElementById("ideas-list");
+  if (ideasListEl) {
+    ideasListEl.addEventListener("click", (e) => {
+      const editBtn = e.target.closest("[data-idea-edit]");
+      if (editBtn) {
+        editingIdeaId = editBtn.dataset.ideaEdit;
+        renderIdeas(lastLoadedIdeas);
+        return;
+      }
+      const cancelBtn = e.target.closest(".idea-edit-cancel");
+      if (cancelBtn) {
+        editingIdeaId = null;
+        renderIdeas(lastLoadedIdeas);
+      }
+    });
+    ideasListEl.addEventListener("submit", async (e) => {
+      const form = e.target.closest(".idea-edit-form");
+      if (!form) return;
+      e.preventDefault();
+      const status = form.querySelector(".idea-edit-status");
+      const payload = {
+        id: form.dataset.ideaId,
+        title: form.querySelector(".idea-edit-title").value.trim(),
+        product: form.querySelector(".idea-edit-product").value.trim(),
+        productCategory: form.querySelector(".idea-edit-category").value.trim(),
+        description: form.querySelector(".idea-edit-description").value.trim(),
+        targetDate: form.querySelector(".idea-edit-target-date").value || null,
+      };
+      status.textContent = "Saving…";
+      status.className = "form-status idea-edit-status";
+      try {
+        const res = await fetch("/api/ideas", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || "Save failed");
+        if (data.source === "clickup") {
+          editingIdeaId = null;
+          await loadIdeas();
+        } else {
+          // Mock/preview mode has no backing store to write the edit into --
+          // GET always returns the same static list -- so closing the form
+          // here would silently look like the edit was dropped. Leave it
+          // open with the same note the create form shows, and let the user
+          // dismiss it with Cancel once they've read it.
+          status.textContent = data.note || "Previewed only — ClickUp intake list isn't configured yet, so this edit wasn't saved.";
+          status.className = "form-status idea-edit-status info";
+        }
+      } catch (err) {
+        status.textContent = `Couldn't save: ${err.message}`;
+        status.className = "form-status idea-edit-status error";
+      }
+    });
+  }
+
   Object.keys(REGISTER_UI).forEach((type) => wireRegisterForm(type));
 
   // Setting a project's tooling priority -- re-sorts the table in place
@@ -4536,7 +5777,8 @@
     const input = form.querySelector(".checklist-add-input");
     const text = (input?.value || "").trim();
     if (!text) return;
-    addCustomChecklistItem(form.dataset.project, form.dataset.section, text);
+    const dateInput = form.querySelector(".checklist-add-date");
+    addCustomChecklistItem(form.dataset.project, form.dataset.section, text, dateInput?.value || "");
     renderChecklists();
   });
 
@@ -4544,6 +5786,18 @@
   // item this project doesn't need -- and restoring every standard item
   // this project has hidden, in one click.
   document.getElementById("checklist-grid").addEventListener("click", (e) => {
+    const editSpan = e.target.closest("[data-editable-text][data-custom-id]");
+    if (editSpan) {
+      // Same reasoning as the Tooling/Lab task list -- stop the enclosing
+      // <label> from also toggling the checkbox on this same click.
+      e.preventDefault();
+      const { project, section, customId } = editSpan.dataset;
+      beginInlineTextEdit(editSpan, (newText) => {
+        editCustomChecklistItem(project, section, customId, { text: newText });
+        renderChecklists();
+      });
+      return;
+    }
     const customBtn = e.target.closest(".checklist-remove-btn[data-remove-custom-id]");
     if (customBtn) {
       removeCustomChecklistItem(customBtn.dataset.project, customBtn.dataset.removeCustomSection, customBtn.dataset.removeCustomId);

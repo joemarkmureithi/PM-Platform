@@ -51,6 +51,7 @@
     <button class="tab active" data-tab="overview"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg><span>Overview</span></button>
     <button class="tab" data-tab="projects"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg><span>Projects</span> <span class="tab-badge" id="tab-count-projects">0</span></button>
     <button class="tab" data-tab="weekly"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18v16H3zM8 3v4M16 3v4M3 10h18"/></svg><span>Weekly Activity</span></button>
+    <button class="tab" data-tab="priorities"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h11"/><circle cx="19" cy="18" r="2"/></svg><span>Weekly Priorities</span></button>
     <button class="tab" data-tab="resourcing"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 3a4 4 0 1 1 0 8 4 4 0 0 1 0-8M22 21v-2a4 4 0 0 0-3-3.8"/></svg><span>Resources</span></button>
     <button class="tab" data-tab="by-category"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5zM3 14l9 5 9-5"/></svg><span>Category</span></button>
     <button class="tab" data-tab="by-gate"><svg class="tab-icon" viewBox="0 0 24 24" width="14.5" height="14.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V4M4 5h13l-2 3 2 3H4"/></svg><span>Stage Gate</span></button>
@@ -142,8 +143,45 @@
         </div>
         <div class="weekly-status-filters" id="weekly-status-filters"></div>
       </section>
+      <!-- Open items dated this week that live outside ClickUp entirely --
+           local Tooling/Lab tasks, Checklist items with a due date, and
+           Idea Dump submissions with a target date. Kept as its own panel
+           rather than folded into the per-project cards above, since Idea
+           Dump items aren't tied to any one project. -->
+      <section class="panel weekly-other-panel" id="weekly-other-panel" hidden>
+        <div class="panel-header">
+          <h2>Other open items this week</h2>
+          <p>Dated items from Tooling, Lab, Checklists, and Idea Dumps that fall in this Monday&ndash;Sunday window -- not pulled from ClickUp.</p>
+        </div>
+        <ul class="weekly-other-list" id="weekly-other-list"></ul>
+      </section>
       <div class="weekly-list" id="weekly-list"></div>
       <div class="empty-state" id="weekly-empty" hidden>No active projects.</div>
+    </section>
+
+    <!-- Weekly Priorities -- a per-project functional-team table (Key
+         Function / Team Utilization per Week / Activities / Priority),
+         styled after the CRCA Diffuser / Sahel Stove roadmap slides. Rows
+         come straight from each project's own Deep Dive Cost & Resource
+         tab (role -> Key Function, effort -> Team Utilization/Week,
+         notes -> Activities), with a Priority column pulled from that
+         project's Deep Dive Priority tab -- so filling in the Deep Dive is
+         what fills in this slide, rather than re-typing the same content
+         twice. -->
+    <section id="tab-panel-priorities" class="tab-panel" hidden>
+      <section class="panel">
+        <div class="panel-header panel-header-row">
+          <div>
+            <h2>Weekly Priorities</h2>
+            <p>Team utilization and priority calls by functional area, sourced from each project's Deep Dive (Cost &amp; Resource + Priority tabs). Fill in a project's Deep Dive to populate its row here.</p>
+          </div>
+          <div class="toolbar-controls">
+            <button type="button" id="priorities-summary-btn" class="action-btn" title="Download this table as a styled HTML page">Download table (HTML)</button>
+          </div>
+        </div>
+      </section>
+      <div id="priorities-groups"></div>
+      <div class="empty-state" id="priorities-empty" hidden>No active projects.</div>
     </section>
 
     <section id="tab-panel-projects" class="tab-panel" hidden>
@@ -711,6 +749,17 @@
   <div class="deepdive-overlay" id="deepdive-overlay" hidden>
     <div class="deepdive-panel" id="deepdive-panel" role="dialog" aria-modal="true" aria-labelledby="deepdive-title">
       <button type="button" class="deepdive-close" id="deepdive-close" aria-label="Close">&times;</button>
+      <!-- Cover photo -- a large per-project banner image, separate from the
+           small header icon/emoji below. Optional; shows an "Add cover
+           photo" placeholder until one is uploaded. -->
+      <div class="deepdive-cover" id="deepdive-cover">
+        <img id="deepdive-cover-img" alt="" hidden />
+        <div class="deepdive-cover-placeholder" id="deepdive-cover-placeholder">No cover photo yet</div>
+        <div class="deepdive-cover-actions">
+          <label class="deepdive-cover-upload-label">📷 <span id="deepdive-cover-upload-label-text">Add cover photo</span><input type="file" id="deepdive-cover-file" accept="image/*" hidden /></label>
+          <button type="button" id="deepdive-cover-remove" class="deepdive-cover-remove" hidden>Remove</button>
+        </div>
+      </div>
       <div class="deepdive-header">
         <button type="button" class="deepdive-icon-btn" id="deepdive-icon-btn" title="Change icon"></button>
         <div class="deepdive-header-text">

@@ -309,13 +309,37 @@ function textFieldAssignees(task, fieldName, members = []) {
   });
 }
 
+// A trimmed, case/whitespace-insensitive key for "is this the same real
+// person" -- used wherever two different ClickUp sources can name the
+// exact same human under two different id shapes (see customFieldAssignees
+// above: the native Assignee field's real numeric user id vs. the
+// "Assigned To (Multi)" Labels field's own fixed-option id). Both sources
+// still agree on the person's actual name, so normalized name is the
+// reliable second key once id alone can't be trusted to mean "one person."
+function normalizePersonName(name) {
+  return String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 // Merges assignee lists from multiple sources (native field, custom field,
-// rolled-up subtasks) and drops duplicates by id, keeping the first name
-// seen for a given person.
+// rolled-up subtasks) and drops duplicates. Two entries with the same id
+// are the obvious case; two entries with DIFFERENT ids but the same
+// normalized name are the less obvious one this list is confirmed to hit
+// live -- a single task's native Assignee field and its "Assigned To
+// (Multi)" Labels field can both list the same real person under two
+// different id shapes (see normalizePersonName above), which used to
+// survive as two separate assignee entries for what's really one human.
+// Keeps the first entry seen for a given id/name either way.
 function dedupeAssignees(list) {
-  const seen = new Map();
+  const seen = new Map(); // id -> assignee
+  const byName = new Map(); // normalized name -> id already kept
   list.forEach((a) => {
-    if (a && a.id != null && !seen.has(String(a.id))) seen.set(String(a.id), a);
+    if (!a || a.id == null) return;
+    const idKey = String(a.id);
+    if (seen.has(idKey)) return;
+    const nameKey = normalizePersonName(a.name);
+    if (nameKey && byName.has(nameKey)) return;
+    seen.set(idKey, a);
+    if (nameKey) byName.set(nameKey, idKey);
   });
   return Array.from(seen.values());
 }
@@ -476,13 +500,29 @@ function toProject(task, opts = {}) {
 // a wrapped-up project shouldn't count against someone's current load.
 // Unassigned projects are rolled into a single "Unassigned" bucket so that
 // gap is visible here too, not just in Decisions & Gaps.
+//
+// Grouped by normalized name (see normalizePersonName), not raw id: two
+// different projects can hand back the exact same real person under two
+// different ClickUp id shapes (the native Assignee field vs. the "Assigned
+// To (Multi)" Labels field's own option ids -- see customFieldAssignees),
+// and dedupeAssignees only catches that split within a single task's own
+// assignee list, not across the whole portfolio. Without this, that one
+// person showed up as two separate rows here -- a duplicate slice in the
+// workload donut/legend, and the SAME project double-counted against what
+// was really one person's total (this is the same id-vs-name split
+// dashboard.js's renderWorkloadKanban already had to work around when
+// matching tasks back to a person -- fixed here at the source instead).
 function computeWorkload(projects) {
-  const byPerson = new Map();
+  const byPerson = new Map(); // consolidation key -> entry
+  const keyByName = new Map(); // normalized name -> consolidation key already in use
   const ensure = (id, name) => {
-    if (!byPerson.has(id)) {
-      byPerson.set(id, { id, name, active: 0, delayed: 0, atRisk: 0, completed: 0, total: 0, projects: [] });
+    const nameKey = id === "unassigned" ? null : normalizePersonName(name);
+    const key = nameKey && keyByName.has(nameKey) ? keyByName.get(nameKey) : id;
+    if (nameKey && !keyByName.has(nameKey)) keyByName.set(nameKey, key);
+    if (!byPerson.has(key)) {
+      byPerson.set(key, { id: key, name, active: 0, delayed: 0, atRisk: 0, completed: 0, total: 0, projects: [] });
     }
-    return byPerson.get(id);
+    return byPerson.get(key);
   };
 
   projects.forEach((p) => {
@@ -497,7 +537,13 @@ function computeWorkload(projects) {
       // estimated any of this project's tasks yet -- callers decide how to
       // display "no data" rather than this silently becoming 0.
       const hours = p.hoursByAssignee && p.hoursByAssignee[owner.id] != null ? p.hoursByAssignee[owner.id] : null;
-      entry.projects.push({ id: p.id, name: p.name, healthBucket: p.healthBucket, url: p.url, hours });
+      // Belt-and-suspenders against this same project being pushed twice
+      // for one consolidated person -- shouldn't happen once dedupeAssignees
+      // has already collapsed a single task's own owner list, but costs
+      // nothing to guarantee here too.
+      if (!entry.projects.some((existing) => existing.id === p.id)) {
+        entry.projects.push({ id: p.id, name: p.name, healthBucket: p.healthBucket, url: p.url, hours });
+      }
     });
   });
 
@@ -608,7 +654,12 @@ function flattenOpenTasks(nodes) {
   const out = [];
   (nodes || []).forEach((n) => {
     if (n.statusType !== "done") {
-      out.push({ id: n.id, name: n.name, status: n.status, assignees: n.assignees || [] });
+      // startDate/dueDate carried through (both epoch-ms or null, same shape
+      // weekly.js's mapNode sets on every node) so callers can tell a task
+      // scheduled into some week apart from one sitting in the backlog with
+      // neither date set -- see the Deep Dive Timeline tab's live ClickUp
+      // feed and Weekly Activity's Product Backlog panel in dashboard.js.
+      out.push({ id: n.id, name: n.name, status: n.status, statusType: n.statusType, assignees: n.assignees || [], startDate: n.startDate ?? null, dueDate: n.dueDate ?? null });
     }
     out.push(...flattenOpenTasks(n.children));
   });

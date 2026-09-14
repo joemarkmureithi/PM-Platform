@@ -1490,6 +1490,21 @@ main {
 .ideas-list .idea-meta { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 .ideas-list .idea-desc { font-size: 12px; color: var(--text-secondary); margin-top: 6px; white-space: pre-wrap; }
 .ideas-list .idea-mock-note { display: inline-block; margin-top: 6px; font-size: 11px; color: var(--status-warning); }
+.idea-edit-btn {
+  float: right;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.idea-edit-btn:hover { color: var(--text-primary); border-color: var(--brand-accent); }
+.idea-edit-form .form-actions { margin-top: 8px; }
+.idea-edit-status.error { color: var(--status-critical); }
 
 /* stage-bar / stage-step are shared with the single-project detail view
    (projectDetailHtml in dashboard.js) -- the "Projects Update" tab that
@@ -1817,6 +1832,39 @@ main {
 .weekly-card-title { font-weight: 600; color: var(--text-primary); text-decoration: none; }
 .weekly-card-title:hover { color: var(--brand-accent); }
 .weekly-card-meta { font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 4px; }
+.weekly-other-panel { margin-bottom: 14px; }
+.weekly-other-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.weekly-other-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  padding: 8px 12px;
+  border: 1px solid var(--gridline-soft);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.weekly-other-source {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--text-secondary);
+  background: var(--surface-1);
+  border: 1px solid var(--gridline);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.weekly-other-project { color: var(--text-secondary); white-space: nowrap; }
+.weekly-other-text { flex: 1; color: var(--text-primary); }
 .weekly-update-list {
   list-style: none;
   margin: 0;
@@ -2309,7 +2357,17 @@ main {
 }
 .checklist-remove-btn:hover { color: var(--status-critical); }
 
-.checklist-add-form { margin-top: 8px; }
+.checklist-add-form { margin-top: 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.checklist-add-form .checklist-add-input { flex: 1 1 220px; width: auto; }
+.checklist-add-date {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--surface-2);
+  border: 1px dashed var(--gridline);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
 .checklist-add-input {
   width: 100%;
   font-family: inherit;
@@ -2321,6 +2379,21 @@ main {
   padding: 7px 10px;
 }
 .checklist-add-input:focus { outline: none; border-color: var(--brand-accent); border-style: solid; }
+
+.checklist-item-text { cursor: text; border-radius: 4px; padding: 1px 3px; margin: -1px -3px; }
+.checklist-item-text:hover { background: var(--surface-2); }
+.inline-edit-input {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border: 1px solid var(--brand-accent);
+  border-radius: 4px;
+  padding: 1px 3px;
+  width: 100%;
+  max-width: 260px;
+}
+.inline-edit-input:focus { outline: none; }
 
 /* Undo for "not applicable to this project" -- shown only once at least
    one standard item has been hidden, so a card that's fully stock never
@@ -2527,7 +2600,7 @@ main {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 4vh 16px;
+  padding: 0;
   z-index: 200;
   overflow-y: auto;
   animation: deepdive-fade-in .18s ease-out;
@@ -2535,17 +2608,25 @@ main {
 .deepdive-overlay[hidden] { display: none; }
 @keyframes deepdive-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
+/* Deep Dive opens maximized -- fills the viewport instead of floating as a
+   centered dialog, so there's real room for the Scope/Timeline/Cost &
+   Resource/Impact/Priority tabs on a real project. Closing the modal (see
+   closeDeepDive) just hides #deepdive-overlay again, which reverts the
+   screen to the normal dashboard view underneath -- nothing here needs to
+   "un-maximize" on the way out. */
 .deepdive-panel {
   position: relative;
-  width: min(880px, 100%);
-  max-height: 92vh;
+  width: 100%;
+  max-width: 100%;
+  min-height: 100vh;
+  max-height: none;
   display: flex;
   flex-direction: column;
   background: var(--surface-solid);
-  border: 1px solid var(--gridline);
-  border-radius: var(--card-radius);
-  box-shadow: var(--shadow-card-lg);
-  padding: 26px 28px 18px;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 26px clamp(20px, 5vw, 64px) 18px;
   animation: deepdive-pop-in .22s cubic-bezier(.2,.8,.3,1);
 }
 @keyframes deepdive-pop-in {
@@ -2569,6 +2650,56 @@ main {
   transition: background .15s, color .15s, transform .15s;
 }
 .deepdive-close:hover { background: var(--status-critical); color: #fff; transform: rotate(90deg); }
+
+.deepdive-cover {
+  position: relative;
+  width: 100%;
+  height: clamp(120px, 22vh, 260px);
+  border-radius: var(--card-radius);
+  overflow: hidden;
+  background: linear-gradient(135deg, var(--surface-2), var(--surface-1));
+  border: 1px solid var(--gridline);
+  margin-bottom: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.deepdive-cover img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.deepdive-cover-placeholder {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.deepdive-cover-actions {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  gap: 8px;
+  z-index: 1;
+}
+.deepdive-cover-upload-label,
+.deepdive-cover-remove {
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.35);
+  background: rgba(12,14,18,.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  color: #fff;
+  cursor: pointer;
+  transition: background .15s;
+}
+.deepdive-cover-upload-label:hover,
+.deepdive-cover-remove:hover { background: var(--brand-accent); border-color: var(--brand-accent); }
 
 .deepdive-header {
   display: flex;
@@ -2752,6 +2883,56 @@ main {
 }
 .deepdive-textarea::placeholder { color: var(--text-muted); font-style: italic; }
 .deepdive-field-block { margin-bottom: 16px; }
+
+/* Weekly Priorities -- read-only, one group per project (edited from that
+   project's Deep Dive, not here). */
+.priorities-group {
+  background: linear-gradient(158deg, var(--surface-1), var(--surface-2));
+  border: 1px solid var(--gridline-soft);
+  border-radius: 18px;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  box-shadow: var(--shadow-card);
+}
+.priorities-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.priorities-group-title { font-weight: 600; color: var(--text-primary); text-decoration: none; font-size: 14.5px; }
+.priorities-group-title:hover { color: var(--brand-accent); }
+.priorities-group-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.priorities-empty-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 6px 0 2px;
+}
+.priorities-empty-hint a { color: var(--brand-accent); cursor: pointer; text-decoration: underline; }
+.priorities-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+.priorities-table th {
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 0 10px 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.priorities-table td {
+  padding: 8px 10px 8px 0;
+  vertical-align: top;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border);
+}
+.priorities-table tr:last-child td { border-bottom: none; }
+.priorities-table .priorities-col-function { font-weight: 600; white-space: nowrap; }
+.priorities-table .priorities-col-utilization { white-space: nowrap; color: var(--text-secondary); font-family: var(--mono); font-size: 11.5px; }
+.priorities-table .priorities-col-priority { max-width: 260px; }
 
 .deepdive-table {
   width: 100%;

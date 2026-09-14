@@ -652,6 +652,7 @@
   function emptyDeepDive() {
     return {
       icon: null, // { emoji } or { photo: dataURL } -- null = category default
+      coverPhoto: null, // dataURL of a larger banner photo, separate from the small header icon -- null = no cover set
       scope: { notes: "", rows: [] }, // rows: { id, feature, stage, rationale, lift }
       timeline: { notes: "", phases: [] }, // phases: { id, label, window, status: upcoming|active|done }
       costResource: { notes: "", rows: [] }, // rows: { id, role, effort, notes }
@@ -769,6 +770,7 @@
     const data = loadDeepDive(project);
     deepDiveState = { project, data, activeTab: "scope" };
     renderDeepDiveHeader();
+    renderDeepDiveCover();
     renderDeepDiveTabs();
     renderDeepDiveBody();
     document.getElementById("deepdive-overlay").hidden = false;
@@ -801,6 +803,31 @@
     const link = document.getElementById("deepdive-clickup-link");
     link.style.display = project.url ? "" : "none";
     link.href = project.url || "#";
+  }
+
+  // Cover photo banner -- a separate, much larger image from the small
+  // header icon above (deepDiveIconHtml). Purely local/per-project, same
+  // storage blob as everything else in the deep dive.
+  function renderDeepDiveCover() {
+    const { data } = deepDiveState;
+    const img = document.getElementById("deepdive-cover-img");
+    const placeholder = document.getElementById("deepdive-cover-placeholder");
+    const removeBtn = document.getElementById("deepdive-cover-remove");
+    const uploadLabelText = document.getElementById("deepdive-cover-upload-label-text");
+    if (!img || !placeholder || !removeBtn) return;
+    if (data.coverPhoto) {
+      img.src = data.coverPhoto;
+      img.hidden = false;
+      placeholder.hidden = true;
+      removeBtn.hidden = false;
+      if (uploadLabelText) uploadLabelText.textContent = "Change cover photo";
+    } else {
+      img.hidden = true;
+      img.removeAttribute("src");
+      placeholder.hidden = false;
+      removeBtn.hidden = true;
+      if (uploadLabelText) uploadLabelText.textContent = "Add cover photo";
+    }
   }
 
   function deepDiveTabHasOpenItems(tabKey, data) {
@@ -1063,6 +1090,48 @@
       };
       reader.readAsDataURL(file);
     });
+
+    // Cover photo: a much larger banner image than the icon above, so it's
+    // downscaled to a wider cap (1600px on the long edge, still well under
+    // localStorage's per-origin quota) rather than the icon's tight 160px
+    // square crop -- meant to actually look like a real photo when shown
+    // full-width across the modal.
+    const coverFile = document.getElementById("deepdive-cover-file");
+    const coverRemoveBtn = document.getElementById("deepdive-cover-remove");
+    if (coverFile) {
+      coverFile.addEventListener("change", (e) => {
+        const file = e.target.files[0];
+        if (!file || !deepDiveState) return;
+        const img = new Image();
+        const reader = new FileReader();
+        reader.onload = () => {
+          img.onload = () => {
+            const maxEdge = 1600;
+            const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+            const w = Math.round(img.width * scale);
+            const h = Math.round(img.height * scale);
+            const canvas = document.createElement("canvas");
+            canvas.width = w;
+            canvas.height = h;
+            canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+            deepDiveState.data.coverPhoto = canvas.toDataURL("image/jpeg", 0.88);
+            persistDeepDiveState();
+            renderDeepDiveCover();
+            coverFile.value = "";
+          };
+          img.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+    if (coverRemoveBtn) {
+      coverRemoveBtn.addEventListener("click", () => {
+        if (!deepDiveState) return;
+        deepDiveState.data.coverPhoto = null;
+        persistDeepDiveState();
+        renderDeepDiveCover();
+      });
+    }
 
     const body = document.getElementById("deepdive-body");
     body.addEventListener("click", (e) => {
@@ -1646,7 +1715,16 @@
     if (weekLabel) weekLabel.textContent = currentWeekRangeLabel();
     renderWeeklyStatusFilters(data);
 
-    const cards = data.projects.map(weeklyCardHtml).filter(Boolean);
+    // Projects with actual movement this week (a WBS tree or a flat update)
+    // float to the top, ahead of ones showing "Nothing starting or due this
+    // week yet" -- so a PM scanning for team-prioritization decisions sees
+    // the projects that need attention first instead of hunting past a wall
+    // of empty cards. A stable sort keeps ClickUp's own ordering within each
+    // group rather than re-shuffling projects that are equally "busy."
+    const hasWeekContent = (p) => (Array.isArray(p.tree) && p.tree.length > 0) || (Array.isArray(p.updates) && p.updates.length > 0);
+    const orderedProjects = [...data.projects].sort((a, b) => Number(hasWeekContent(b)) - Number(hasWeekContent(a)));
+
+    const cards = orderedProjects.map(weeklyCardHtml).filter(Boolean);
     const filterNote = weeklyStatusFilter ? ` · filtered to "${weeklyStatusFilter}"` : "";
     total.textContent = weeklyStatusFilter
       ? `${cards.length} of ${data.totalActive} active project${data.totalActive === 1 ? "" : "s"}${filterNote}`
@@ -1662,6 +1740,86 @@
     list.innerHTML = cards.join("");
   }
 
+  // ---- Weekly Activity: local (non-ClickUp) dated items --------------------
+  // Tooling/Lab tasks and Checklist items are local-only (they never touch
+  // ClickUp), and Idea Dumps lives in its own separate ClickUp intake list --
+  // none of that shows up in the ClickUp-sourced /api/weekly response above.
+  // This scans every project's local task/checklist storage for anything
+  // carrying a due date inside the current Monday-Sunday window, plus fetches
+  // Idea Dumps submissions and filters the same way, so "what's open this
+  // week" isn't limited to what happens to live on the Active ClickUp list.
+  function isIsoInCurrentWeek(iso) {
+    if (!iso) return false;
+    const ms = Date.parse(iso);
+    if (Number.isNaN(ms)) return false;
+    const now = new Date();
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    monday.setDate(monday.getDate() - ((now.getDay() + 6) % 7));
+    const nextMonday = new Date(monday);
+    nextMonday.setDate(monday.getDate() + 7);
+    return ms >= monday.getTime() && ms < nextMonday.getTime();
+  }
+
+  function collectLocalWeeklyItems() {
+    const items = [];
+    allProjects.forEach((p) => {
+      getProjectTasks(p.id).forEach((t) => {
+        if (!t.done && isIsoInCurrentWeek(t.dueDate)) {
+          items.push({ source: "Tooling/Lab", projectName: p.name, text: t.text, dueDate: t.dueDate });
+        }
+      });
+      const checklistData = getCustomChecklistData(p.id);
+      Object.keys(checklistData).forEach((sectionKey) => {
+        (checklistData[sectionKey] || []).forEach((it) => {
+          if (!it.checked && isIsoInCurrentWeek(it.dueDate)) {
+            items.push({ source: "Checklist", projectName: p.name, text: it.text, dueDate: it.dueDate });
+          }
+        });
+      });
+    });
+    return items;
+  }
+
+  async function loadIdeaWeeklyItems() {
+    try {
+      const res = await fetch("/api/ideas");
+      const data = await res.json();
+      const ideas = data.ideas || [];
+      return ideas
+        .filter((idea) => isIsoInCurrentWeek(idea.dueDate))
+        .map((idea) => ({ source: "Idea Dump", projectName: null, text: idea.name, dueDate: idea.dueDate }));
+    } catch {
+      return [];
+    }
+  }
+
+  function weeklyOtherItemHtml(item) {
+    const urgency = item.dueDate ? dateUrgencyInfo(item.dueDate) : null;
+    return `
+      <li class="weekly-other-item">
+        <span class="weekly-other-source">${escapeHtml(item.source)}</span>
+        ${item.projectName ? `<span class="weekly-other-project">${escapeHtml(item.projectName)}</span>` : ""}
+        <span class="weekly-other-text">${escapeHtml(item.text)}</span>
+        ${urgency ? `<span class="reason-chip ${urgency.cls}">${escapeHtml(urgency.label)}</span>` : ""}
+      </li>`;
+  }
+
+  async function renderWeeklyOtherItems() {
+    const panel = document.getElementById("weekly-other-panel");
+    const list = document.getElementById("weekly-other-list");
+    if (!panel || !list) return;
+    const local = collectLocalWeeklyItems();
+    const ideaItems = await loadIdeaWeeklyItems();
+    const all = [...local, ...ideaItems].sort((a, b) => Date.parse(a.dueDate) - Date.parse(b.dueDate));
+    if (all.length === 0) {
+      panel.hidden = true;
+      list.innerHTML = "";
+      return;
+    }
+    panel.hidden = false;
+    list.innerHTML = all.map(weeklyOtherItemHtml).join("");
+  }
+
   async function loadWeekly() {
     const total = document.getElementById("weekly-total");
     total.textContent = "Loading…";
@@ -1670,6 +1828,7 @@
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       renderWeekly(data);
+      renderWeeklyOtherItems();
       weeklyLoaded = true;
     } catch (err) {
       total.textContent = "Error loading weekly activity";
@@ -2726,11 +2885,49 @@
 
   // ---- New Idea intake ---------------------------------------------------
 
+  let lastLoadedIdeas = [];
+  let editingIdeaId = null; // set while a card's inline edit form is open
+
   function ideaCardHtml(idea, opts = {}) {
     const created = idea.createdAt ? fmtDate(idea.createdAt) : "—";
+    if (idea.id === editingIdeaId) {
+      return `
+        <li>
+          <form class="idea-edit-form" data-idea-id="${escapeHtml(idea.id)}">
+            <div class="form-grid">
+              <label class="form-field">
+                <span class="form-label">Title <span class="required">*</span></span>
+                <input type="text" class="idea-edit-title" value="${escapeHtml(idea.name || "")}" required />
+              </label>
+              <label class="form-field">
+                <span class="form-label">Product / Model <span class="required">*</span></span>
+                <input type="text" class="idea-edit-product" value="${escapeHtml(idea.product || "")}" required />
+              </label>
+              <label class="form-field">
+                <span class="form-label">Product Category <span class="required">*</span></span>
+                <input type="text" class="idea-edit-category" list="idea-category-options" value="${escapeHtml(idea.productCategory || "")}" required />
+              </label>
+              <label class="form-field">
+                <span class="form-label">Target date <span class="optional">(optional)</span></span>
+                <input type="date" class="idea-edit-target-date" value="${escapeHtml((idea.dueDate || "").slice(0, 10))}" />
+              </label>
+            </div>
+            <label class="form-field form-field-wide">
+              <span class="form-label">Description <span class="required">*</span></span>
+              <textarea class="idea-edit-description" rows="4" required>${escapeHtml(idea.descriptionText != null ? idea.descriptionText : idea.description || "")}</textarea>
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="action-btn action-btn-primary">Save changes</button>
+              <button type="button" class="action-btn idea-edit-cancel">Cancel</button>
+              <span class="form-status idea-edit-status"></span>
+            </div>
+          </form>
+        </li>`;
+    }
     return `
       <li>
         <a class="idea-title" href="${escapeHtml(idea.url || "#")}" target="_blank" rel="noopener">${escapeHtml(idea.name)}</a>
+        <button type="button" class="idea-edit-btn" data-idea-edit="${escapeHtml(idea.id)}" title="Edit this submission">Edit</button>
         <div class="idea-meta">Submitted ${created}${idea.dueDate ? ` · Target ${fmtDate(idea.dueDate)}` : ""}</div>
         ${idea.description ? `<div class="idea-desc">${escapeHtml(idea.description)}</div>` : ""}
         ${opts.mockNote ? `<span class="idea-mock-note">${escapeHtml(opts.mockNote)}</span>` : ""}
@@ -2738,6 +2935,7 @@
   }
 
   function renderIdeas(ideas) {
+    lastLoadedIdeas = ideas || [];
     const list = document.getElementById("ideas-list");
     const empty = document.getElementById("ideas-empty");
     if (!ideas || ideas.length === 0) {
@@ -3203,10 +3401,24 @@
     return getCustomChecklistData(projectId)[sectionKey] || [];
   }
 
-  function addCustomChecklistItem(projectId, sectionKey, text) {
+  function addCustomChecklistItem(projectId, sectionKey, text, dueDate) {
     const data = getCustomChecklistData(projectId);
     const list = data[sectionKey] || [];
-    list.push({ id: `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, text, checked: false });
+    list.push({ id: `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, text, checked: false, dueDate: dueDate || "" });
+    data[sectionKey] = list;
+    setCustomChecklistData(projectId, data);
+  }
+
+  // Used by the click-to-edit affordance on checklist items (see
+  // wireChecklistItemEdit) -- updates text and/or dueDate in place without
+  // touching checked state or id.
+  function editCustomChecklistItem(projectId, sectionKey, itemId, changes) {
+    const data = getCustomChecklistData(projectId);
+    const list = data[sectionKey] || [];
+    const item = list.find((it) => it.id === itemId);
+    if (!item) return;
+    if (changes.text !== undefined) item.text = changes.text;
+    if (changes.dueDate !== undefined) item.dueDate = changes.dueDate;
     data[sectionKey] = list;
     setCustomChecklistData(projectId, data);
   }
@@ -3264,16 +3476,18 @@
       .join("");
 
     const customHtml = customItems
-      .map(
-        (it) => `
+      .map((it) => {
+        const urgency = it.dueDate ? dateUrgencyInfo(it.dueDate) : null;
+        return `
             <li class="checklist-item${it.checked ? " checklist-item-done" : ""}">
               <label>
                 <input type="checkbox" data-project="${escapeHtml(p.id)}" data-section="${escapeHtml(sectionKey)}" data-custom-id="${escapeHtml(it.id)}" ${it.checked ? "checked" : ""} />
-                <span>${escapeHtml(it.text)}</span>
+                <span class="checklist-item-text" data-project="${escapeHtml(p.id)}" data-section="${escapeHtml(sectionKey)}" data-custom-id="${escapeHtml(it.id)}" data-editable-text title="Click to edit">${escapeHtml(it.text)}</span>
               </label>
+              ${urgency ? `<span class="reason-chip ${urgency.cls}">${escapeHtml(urgency.label)}</span>` : ""}
               <button type="button" class="checklist-remove-btn" data-project="${escapeHtml(p.id)}" data-remove-custom-section="${escapeHtml(sectionKey)}" data-remove-custom-id="${escapeHtml(it.id)}" title="Remove this item" aria-label="Remove this item">&times;</button>
-            </li>`
-      )
+            </li>`;
+      })
       .join("");
 
     const emptyMessage = isFollowups ? "No follow-up items added yet." : "No items in this section for this project.";
@@ -3290,6 +3504,7 @@
           <ul class="checklist-items">${standardHtml}${customHtml}${noneHtml}</ul>
           <form class="checklist-add-form" data-project="${escapeHtml(p.id)}" data-section="${escapeHtml(sectionKey)}">
             <input type="text" class="checklist-add-input" placeholder="Add an item to this section and press Enter…" maxlength="200" />
+            <input type="date" class="checklist-add-date" aria-label="Optional due date" />
           </form>
           ${nestedHtml}
         </details>`,
@@ -3400,6 +3615,121 @@
     }
     if (empty) empty.hidden = true;
     grid.innerHTML = rows.map(checklistCardHtml).join("");
+  }
+
+  // ---- Weekly Priorities: Sahel-stove/CRCA-diffuser slide-style table -----
+  // Deliberately reuses each project's own Deep Dive Cost & Resource rows
+  // (role -> Key Function, effort -> Team Utilization/Week, notes ->
+  // Activities) rather than a second, separately-maintained data entry --
+  // filling in a project's Deep Dive is what populates its row here. The
+  // Priority column pulls from that same project's Deep Dive Priority tab:
+  // the first unresolved open question if there is one (the live "what to
+  // choose" decision), else the priority score/notes, else a prompt to set
+  // one.
+  function priorityColumnText(data) {
+    const unresolved = ((data.priority && data.priority.questions) || []).filter((q) => !q.resolved);
+    const scoreLabel = data.priority && data.priority.score ? `Priority ${data.priority.score}/5` : "";
+    if (unresolved.length > 0) {
+      return `${scoreLabel ? scoreLabel + " — " : ""}Needs a call: ${unresolved[0].text}`;
+    }
+    if (scoreLabel) return `${scoreLabel}${data.priority.notes ? " — " + data.priority.notes : ""}`;
+    return "";
+  }
+
+  function priorityGroupHtml(p) {
+    const data = loadDeepDive(p);
+    const rows = (data.costResource && data.costResource.rows) || [];
+    const priorityText = priorityColumnText(data);
+    const gate = p.currentGate || p.gatePhase;
+    const rowsHtml = rows
+      .map(
+        (r) => `
+        <tr>
+          <td class="priorities-col-function">${escapeHtml(r.role || "—")}</td>
+          <td class="priorities-col-utilization">${escapeHtml(r.effort || "—")}</td>
+          <td>${escapeHtml(r.notes || "—")}</td>
+          <td class="priorities-col-priority">${escapeHtml(priorityText || "No priority set yet")}</td>
+        </tr>`
+      )
+      .join("");
+    return `
+      <div class="priorities-group" data-project-id="${escapeHtml(p.id)}">
+        <div class="priorities-group-header">
+          <a class="priorities-group-title" href="${escapeHtml(p.url || "#")}" target="_blank" rel="noopener">${escapeHtml(p.name)}</a>
+          <div class="priorities-group-badges">
+            <span class="health-pill"><span class="status-dot ${p.healthBucket}"></span>${escapeHtml(HEALTH_LABEL[p.healthBucket] || p.healthBucket)}</span>
+            ${gate ? `<span class="checklist-gate-pill">${escapeHtml(gate)}</span>` : ""}
+          </div>
+        </div>
+        ${
+          rows.length
+            ? `<table class="priorities-table">
+                <thead><tr><th>Key Function</th><th>Team Utilization/Week</th><th>Activities</th><th>Priority</th></tr></thead>
+                <tbody>${rowsHtml}</tbody>
+              </table>`
+            : `<div class="priorities-empty-hint">No Cost &amp; Resource rows yet — <a data-open-deepdive="${escapeHtml(p.id)}">open this project's Deep Dive</a> to add functional-team rows here.</div>`
+        }
+      </div>`;
+  }
+
+  function renderWeeklyPriorities() {
+    const container = document.getElementById("priorities-groups");
+    const empty = document.getElementById("priorities-empty");
+    if (!container) return;
+    const rows = getContextProjects().filter((p) => p.healthBucket !== "completed");
+    if (rows.length === 0) {
+      container.innerHTML = "";
+      if (empty) empty.hidden = false;
+      return;
+    }
+    if (empty) empty.hidden = true;
+    container.innerHTML = rows.map(priorityGroupHtml).join("");
+  }
+
+  // Standalone, single-file HTML export of the same table -- same "keep it
+  // self-contained" reasoning as the Weekly standup summary export below.
+  function renderWeeklyPrioritiesHtml() {
+    const rows = getContextProjects().filter((p) => p.healthBucket !== "completed");
+    const groups = rows
+      .map((p) => {
+        const data = loadDeepDive(p);
+        const crRows = (data.costResource && data.costResource.rows) || [];
+        const priorityText = priorityColumnText(data);
+        if (crRows.length === 0) return "";
+        const rowsHtml = crRows
+          .map(
+            (r) => `<tr><td>${escapeHtml(r.role || "—")}</td><td>${escapeHtml(r.effort || "—")}</td><td>${escapeHtml(r.notes || "—")}</td><td>${escapeHtml(priorityText || "No priority set yet")}</td></tr>`
+          )
+          .join("");
+        return `<h2>${escapeHtml(p.name)}</h2><table><thead><tr><th>Key Function</th><th>Team Utilization/Week</th><th>Activities</th><th>Priority</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
+      })
+      .join("");
+    return `<!doctype html>
+<html><head><meta charset="utf-8" />
+<title>Weekly Priorities — ${escapeHtml(currentWeekRangeLabel())}</title>
+<style>
+  body { font-family: "Plus Jakarta Sans", Arial, sans-serif; background: #f7f5f2; color: #1c1c1e; margin: 0; padding: 32px 40px 56px; }
+  .doc-header { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+  .doc-header img { height: 40px; }
+  .brand-name { font-family: "Outfit", Arial, sans-serif; font-weight: 700; font-size: 20px; }
+  .brand-tagline { font-size: 12px; color: #6b6b70; display: block; }
+  h1 { font-family: "Outfit", Arial, sans-serif; font-size: 22px; margin: 18px 0 2px; }
+  .week-label { color: #6b6b70; font-size: 13px; margin-bottom: 24px; }
+  h2 { font-family: "Outfit", Arial, sans-serif; font-size: 15px; margin: 26px 0 8px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+  th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: .03em; color: #8a8a90; padding: 0 10px 6px 0; border-bottom: 1px solid #ddd; }
+  td { font-size: 12.5px; padding: 8px 10px 8px 0; border-bottom: 1px solid #eee; vertical-align: top; }
+</style>
+</head>
+<body>
+  <div class="doc-header">
+    <img src="${ECOA_LOGO_DATA_URI}" alt="ecoa logo" />
+    <div><span class="brand-name">ecoa</span><span class="brand-tagline">Biomass Portfolio Intelligence</span></div>
+  </div>
+  <h1>Weekly Priorities</h1>
+  <div class="week-label">${escapeHtml(currentWeekRangeLabel())}</div>
+  ${groups || "<p>No projects have Cost &amp; Resource rows in their Deep Dive yet.</p>"}
+</body></html>`;
   }
 
   // ---- Tooling: projects with a live tooling requirement ------------------
@@ -3722,6 +4052,15 @@
     setProjectTasks(projectId, getProjectTasks(projectId).filter((t) => t.id !== taskId));
   }
 
+  function editProjectTask(projectId, taskId, text) {
+    const tasks = getProjectTasks(projectId);
+    const task = tasks.find((t) => t.id === taskId);
+    if (task) {
+      task.text = text;
+      setProjectTasks(projectId, tasks);
+    }
+  }
+
   function projectTasksSummary(projectId) {
     const tasks = getProjectTasks(projectId);
     return { total: tasks.length, open: tasks.filter((t) => !t.done).length };
@@ -3739,11 +4078,48 @@
       <li class="checklist-item${task.done ? " checklist-item-done" : ""}">
         <label>
           <input type="checkbox" data-task-toggle data-project="${escapeHtml(projectId)}" data-task-id="${escapeHtml(task.id)}"${task.done ? " checked" : ""} />
-          <span>${escapeHtml(task.text)}</span>
+          <span class="checklist-item-text" data-project="${escapeHtml(projectId)}" data-task-id="${escapeHtml(task.id)}" data-editable-text title="Click to edit">${escapeHtml(task.text)}</span>
         </label>
         ${urgency ? `<span class="reason-chip ${urgency.cls}">${escapeHtml(urgency.label)}</span>` : ""}
         <button type="button" class="checklist-remove-btn" data-task-remove data-project="${escapeHtml(projectId)}" data-task-id="${escapeHtml(task.id)}" title="Remove task" aria-label="Remove task">&times;</button>
       </li>`;
+  }
+
+  // ---- Shared click-to-edit for task/checklist item text -------------------
+  // One delegated helper used by both the Tooling/Lab task list and the
+  // Checklist custom items below -- clicking an item's text swaps it for an
+  // inline input; Enter or blur commits via `onSave(newText)`, Escape
+  // cancels without saving. `onSave` is responsible for persisting and
+  // re-rendering.
+  function beginInlineTextEdit(span, onSave) {
+    if (!span || span.dataset.editing) return;
+    const original = span.textContent;
+    span.dataset.editing = "true";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "inline-edit-input";
+    input.value = original;
+    input.maxLength = 200;
+    span.replaceWith(input);
+    input.focus();
+    input.select();
+    let done = false;
+    function commit(save) {
+      if (done) return;
+      done = true;
+      const newText = input.value.trim();
+      if (save && newText && newText !== original) {
+        onSave(newText);
+      } else {
+        span.dataset.editing = "";
+        input.replaceWith(span);
+      }
+    }
+    input.addEventListener("blur", () => commit(true));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); commit(true); }
+      else if (e.key === "Escape") { e.preventDefault(); commit(false); }
+    });
   }
 
   function projectTasksRowHtml(projectId, colspan) {
@@ -3809,6 +4185,19 @@
       if (removeBtn) {
         removeProjectTask(removeBtn.dataset.project, removeBtn.dataset.taskId);
         refreshProjectTasksUI(tbody, removeBtn.dataset.project);
+        return;
+      }
+      const editSpan = e.target.closest("[data-editable-text][data-task-id]");
+      if (editSpan) {
+        // Prevent the surrounding <label>'s native click-forwarding from
+        // also toggling the checkbox -- otherwise clicking the text to edit
+        // it would flip the task's done state at the same time.
+        e.preventDefault();
+        const { project, taskId } = editSpan.dataset;
+        beginInlineTextEdit(editSpan, (newText) => {
+          editProjectTask(project, taskId, newText);
+          refreshProjectTasksUI(tbody, project);
+        });
       }
     });
     tbody.addEventListener("change", (e) => {
@@ -4171,6 +4560,7 @@
     renderWorkloadDonut(data.workload);
     renderWorkloadKanban(data.workload, weeklyData);
     renderChecklists();
+    renderWeeklyPriorities();
     renderTooling();
     renderLab();
     renderContextHint();
@@ -4285,6 +4675,27 @@
   });
 
   document.getElementById("weekly-slides-btn").addEventListener("click", (e) => downloadStandupSlides(e.currentTarget));
+
+  const prioritiesSummaryBtn = document.getElementById("priorities-summary-btn");
+  if (prioritiesSummaryBtn) {
+    prioritiesSummaryBtn.addEventListener("click", () => {
+      downloadTextFile(`weekly-priorities-${currentWeekMondayIso()}.html`, renderWeeklyPrioritiesHtml(), "text/html");
+    });
+  }
+  const prioritiesGroups = document.getElementById("priorities-groups");
+  if (prioritiesGroups) {
+    prioritiesGroups.addEventListener("click", (e) => {
+      const link = e.target.closest("[data-open-deepdive]");
+      if (!link) return;
+      e.preventDefault();
+      openDeepDive(link.dataset.openDeepdive);
+      if (deepDiveState) {
+        deepDiveState.activeTab = "costResource";
+        renderDeepDiveTabs();
+        renderDeepDiveBody();
+      }
+    });
+  }
 
   document.getElementById("viewing-select").addEventListener("change", (e) => {
     viewingProjectId = e.target.value;
@@ -4416,6 +4827,67 @@
     }
   });
 
+  // Edit an already-submitted idea in place -- clicking "Edit" on a card
+  // swaps just that card for a form pre-filled from the fields ideas.js
+  // parsed back out of the ClickUp task's description (see
+  // parseIdeaDescription), saving on submit via PUT /api/ideas.
+  const ideasListEl = document.getElementById("ideas-list");
+  if (ideasListEl) {
+    ideasListEl.addEventListener("click", (e) => {
+      const editBtn = e.target.closest("[data-idea-edit]");
+      if (editBtn) {
+        editingIdeaId = editBtn.dataset.ideaEdit;
+        renderIdeas(lastLoadedIdeas);
+        return;
+      }
+      const cancelBtn = e.target.closest(".idea-edit-cancel");
+      if (cancelBtn) {
+        editingIdeaId = null;
+        renderIdeas(lastLoadedIdeas);
+      }
+    });
+    ideasListEl.addEventListener("submit", async (e) => {
+      const form = e.target.closest(".idea-edit-form");
+      if (!form) return;
+      e.preventDefault();
+      const status = form.querySelector(".idea-edit-status");
+      const payload = {
+        id: form.dataset.ideaId,
+        title: form.querySelector(".idea-edit-title").value.trim(),
+        product: form.querySelector(".idea-edit-product").value.trim(),
+        productCategory: form.querySelector(".idea-edit-category").value.trim(),
+        description: form.querySelector(".idea-edit-description").value.trim(),
+        targetDate: form.querySelector(".idea-edit-target-date").value || null,
+      };
+      status.textContent = "Saving…";
+      status.className = "form-status idea-edit-status";
+      try {
+        const res = await fetch("/api/ideas", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || "Save failed");
+        if (data.source === "clickup") {
+          editingIdeaId = null;
+          await loadIdeas();
+        } else {
+          // Mock/preview mode has no backing store to write the edit into --
+          // GET always returns the same static list -- so closing the form
+          // here would silently look like the edit was dropped. Leave it
+          // open with the same note the create form shows, and let the user
+          // dismiss it with Cancel once they've read it.
+          status.textContent = data.note || "Previewed only — ClickUp intake list isn't configured yet, so this edit wasn't saved.";
+          status.className = "form-status idea-edit-status info";
+        }
+      } catch (err) {
+        status.textContent = `Couldn't save: ${err.message}`;
+        status.className = "form-status idea-edit-status error";
+      }
+    });
+  }
+
   Object.keys(REGISTER_UI).forEach((type) => wireRegisterForm(type));
 
   // Setting a project's tooling priority -- re-sorts the table in place
@@ -4536,7 +5008,8 @@
     const input = form.querySelector(".checklist-add-input");
     const text = (input?.value || "").trim();
     if (!text) return;
-    addCustomChecklistItem(form.dataset.project, form.dataset.section, text);
+    const dateInput = form.querySelector(".checklist-add-date");
+    addCustomChecklistItem(form.dataset.project, form.dataset.section, text, dateInput?.value || "");
     renderChecklists();
   });
 
@@ -4544,6 +5017,18 @@
   // item this project doesn't need -- and restoring every standard item
   // this project has hidden, in one click.
   document.getElementById("checklist-grid").addEventListener("click", (e) => {
+    const editSpan = e.target.closest("[data-editable-text][data-custom-id]");
+    if (editSpan) {
+      // Same reasoning as the Tooling/Lab task list -- stop the enclosing
+      // <label> from also toggling the checkbox on this same click.
+      e.preventDefault();
+      const { project, section, customId } = editSpan.dataset;
+      beginInlineTextEdit(editSpan, (newText) => {
+        editCustomChecklistItem(project, section, customId, { text: newText });
+        renderChecklists();
+      });
+      return;
+    }
     const customBtn = e.target.closest(".checklist-remove-btn[data-remove-custom-id]");
     if (customBtn) {
       removeCustomChecklistItem(customBtn.dataset.project, customBtn.dataset.removeCustomSection, customBtn.dataset.removeCustomId);

@@ -27,7 +27,7 @@
 
   <header class="app-header">
     <div class="brand-block">
-      <img src="assets/ecoa-logo.png" alt="ecoa — stoves for life" class="brand-logo" />
+      <img src="assets/ecoa-mark-header.png" alt="ecoa" class="brand-logo" />
       <span class="brand-divider" aria-hidden="true"></span>
       <div class="brand-row">
         <span class="brand-name">Biomass Portfolio Intelligence</span>
@@ -141,6 +141,35 @@
           </div>
         </div>
         <div class="weekly-status-filters" id="weekly-status-filters"></div>
+      </section>
+      <!-- Open items dated this week that live outside ClickUp entirely --
+           local Tooling/Lab tasks, Checklist items with a due date, and
+           Idea Dump submissions with a target date. Kept as its own panel
+           rather than folded into the per-project cards above, since Idea
+           Dump items aren't tied to any one project. -->
+      <section class="panel weekly-other-panel" id="weekly-other-panel" hidden>
+        <div class="panel-header">
+          <h2>Other open items this week</h2>
+          <p>Dated items from Tooling, Lab, Checklists, and Idea Dumps that fall in this Monday&ndash;Sunday window -- not pulled from ClickUp.</p>
+        </div>
+        <ul class="weekly-other-list" id="weekly-other-list"></ul>
+      </section>
+      <!-- Product Backlog -- ClickUp tasks with no start_date AND no
+           due_date at all, grouped per project. Distinct from "Other open
+           items this week" above (which is dated-but-local) and from the
+           per-project cards below (which are ClickUp-dated) -- this is
+           specifically the undated backlog, collapsed by default since it
+           can run long. -->
+      <section class="panel weekly-backlog-panel" id="weekly-backlog-panel" hidden>
+        <details id="weekly-backlog-details">
+          <summary class="panel-header weekly-backlog-summary">
+            <div>
+              <h2>Product Backlog <span class="tab-badge" id="weekly-backlog-count">0</span></h2>
+              <p>Open ClickUp tasks with no start or due date set yet -- not scheduled into any week, so they never appear above.</p>
+            </div>
+          </summary>
+          <div id="weekly-backlog-groups"></div>
+        </details>
       </section>
       <div class="weekly-list" id="weekly-list"></div>
       <div class="empty-state" id="weekly-empty" hidden>No active projects.</div>
@@ -292,9 +321,30 @@
       <section class="panel">
         <div class="panel-header">
           <h2>Live Risk Signals</h2>
-          <p>Every non-completed project that needs risk intervention — someone has flagged it directly in ClickUp (Risk Status, or an explicit "at risk" health), it's simply fallen behind schedule and isn't done, or its next stage gate is within 14 days while its stage-gate checklist (Checklists tab) still isn't fully checked off. The first two come straight from ClickUp; the checklist signal is computed here in this browser, since the checklist itself is saved locally rather than in ClickUp. A project already flagged for another reason gets this reason added to it rather than a second row.</p>
+          <p>Every non-completed project that needs risk intervention right now. Click a reason to see exactly which projects it's counting.</p>
         </div>
-        <div class="kpi-row" id="risk-kpi-row"></div>
+        <div class="risk-hero" id="risk-hero">
+          <div class="risk-hero-main">
+            <div class="risk-hero-ring" id="risk-hero-ring" aria-hidden="true">
+              <svg viewBox="0 0 120 120" class="risk-hero-ring-svg">
+                <circle class="risk-hero-ring-track" cx="60" cy="60" r="52"></circle>
+                <circle class="risk-hero-ring-fill" id="risk-hero-ring-fill" cx="60" cy="60" r="52"></circle>
+              </svg>
+              <div class="risk-hero-ring-center">
+                <div class="risk-hero-value" id="risk-hero-value">0</div>
+              </div>
+            </div>
+            <div class="risk-hero-label">projects need risk intervention right now</div>
+          </div>
+          <div class="risk-hero-reasons">
+            <div class="risk-hero-reasons-title">Breakdown — not additive, a project can match more than one</div>
+            <div class="risk-reason-row" id="risk-reason-row"></div>
+          </div>
+        </div>
+        <details class="risk-hero-details">
+          <summary class="risk-hero-details-summary">How this is calculated</summary>
+          <p>A project counts as needing risk intervention if someone has flagged it directly in ClickUp (Risk Status, or an explicit "at risk" health), it's simply fallen behind schedule and isn't done, or its next stage gate is within 14 days while its stage-gate checklist (Checklists tab) still isn't fully checked off. The first two come straight from ClickUp; the checklist signal is computed here in this browser, since the checklist itself is saved locally rather than in ClickUp. A project already flagged for another reason gets this reason added to it rather than a second row.</p>
+        </details>
       </section>
 
       <section class="panel">
@@ -311,6 +361,10 @@
         <div class="panel-header">
           <h2>At-risk projects</h2>
           <p>Sorted so anything still missing a mitigation plan leads.</p>
+        </div>
+        <div class="risk-filter-banner" id="risk-filter-banner" hidden>
+          <span id="risk-filter-banner-text"></span>
+          <button type="button" id="risk-filter-clear" class="risk-filter-clear">Clear highlight</button>
         </div>
         <div class="table-wrap">
           <table id="risks-table">
@@ -712,19 +766,70 @@
     <div class="deepdive-panel" id="deepdive-panel" role="dialog" aria-modal="true" aria-labelledby="deepdive-title">
       <button type="button" class="deepdive-close" id="deepdive-close" aria-label="Close">&times;</button>
       <div class="deepdive-header">
-        <button type="button" class="deepdive-icon-btn" id="deepdive-icon-btn" title="Change icon"></button>
+        <!-- One square image, sized for the square product photos these
+             projects actually have -- doubles as this project's cover AND
+             its thumbnail everywhere else in the dashboard (project cards,
+             kanban, etc. -- see deepDiveIconHtml), so there's only one photo
+             to keep updated instead of two. Falls back to a big emoji when
+             no photo has been set. Clicking it (when a photo is set) opens
+             a full-size lightbox; the actions that edit it live in their
+             own column to the right instead of crowding the title text. -->
+        <button type="button" class="deepdive-cover" id="deepdive-cover" aria-label="View photo full-size">
+          <img id="deepdive-cover-img" alt="" hidden />
+          <span id="deepdive-cover-emoji" class="deepdive-cover-emoji"></span>
+          <span class="deepdive-cover-zoom-hint" id="deepdive-cover-zoom-hint" hidden>🔍</span>
+        </button>
         <div class="deepdive-header-text">
           <div class="deepdive-eyebrow" id="deepdive-eyebrow"></div>
           <h2 id="deepdive-title"></h2>
           <div class="deepdive-meta" id="deepdive-meta"></div>
+          <div class="deepdive-quick-facts" id="deepdive-quick-facts"></div>
         </div>
-        <a class="deepdive-clickup-link" id="deepdive-clickup-link" href="#" target="_blank" rel="noopener" title="Open in ClickUp">Open in ClickUp ↗</a>
+        <div class="deepdive-header-actions">
+          <div class="deepdive-cover-actions">
+            <label class="deepdive-cover-upload-label"><span id="deepdive-cover-upload-label-text">📷 Add photo</span><input type="file" id="deepdive-cover-file" accept="image/*" hidden /></label>
+            <button type="button" id="deepdive-cover-recrop" class="deepdive-cover-recrop" hidden>✂️ Recrop</button>
+            <button type="button" id="deepdive-cover-remove" class="deepdive-cover-remove" hidden>Remove photo</button>
+            <button type="button" id="deepdive-cover-emoji-btn" class="deepdive-cover-emoji-btn">Choose emoji instead</button>
+          </div>
+          <a class="deepdive-clickup-link" id="deepdive-clickup-link" href="#" target="_blank" rel="noopener" title="Open in ClickUp">Open in ClickUp ↗</a>
+        </div>
       </div>
       <div class="deepdive-icon-picker" id="deepdive-icon-picker" hidden></div>
       <div class="deepdive-tabs" id="deepdive-tabs"></div>
       <div class="deepdive-body" id="deepdive-body"></div>
       <div class="deepdive-footer">
         <span id="deepdive-saved-note" class="deepdive-saved-note">Saved locally in this browser -- not synced to ClickUp.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cover photo lightbox -- click the Deep Dive cover to see it full
+       size instead of squeezed into the ~180px header tile. -->
+  <div class="lightbox-overlay" id="cover-lightbox-overlay" hidden>
+    <button type="button" class="lightbox-close" id="cover-lightbox-close" aria-label="Close">&times;</button>
+    <img id="cover-lightbox-img" class="lightbox-img" alt="" />
+  </div>
+
+  <!-- Cover photo crop tool -- opens on a fresh upload, or via "Recrop" on
+       an existing photo. Drag to reposition, slider to zoom; Save renders
+       the square viewport onto an offscreen canvas (see wireCoverCropper in
+       dashboard.js), never a plain resize-and-save. -->
+  <div class="crop-overlay" id="crop-overlay" hidden>
+    <div class="crop-panel" role="dialog" aria-modal="true" aria-labelledby="crop-title">
+      <h3 id="crop-title">Position photo</h3>
+      <p class="crop-hint">Drag to reposition, use the slider to zoom. This becomes the square photo shown everywhere this project appears.</p>
+      <div class="crop-viewport" id="crop-viewport">
+        <img id="crop-img" alt="" draggable="false" />
+      </div>
+      <div class="crop-controls">
+        <span class="crop-zoom-icon" aria-hidden="true">－</span>
+        <input type="range" id="crop-zoom" min="1" max="3" step="0.01" value="1" aria-label="Zoom" />
+        <span class="crop-zoom-icon" aria-hidden="true">＋</span>
+      </div>
+      <div class="crop-actions">
+        <button type="button" id="crop-cancel" class="action-btn">Cancel</button>
+        <button type="button" id="crop-save" class="action-btn action-btn-primary">Save photo</button>
       </div>
     </div>
   </div>

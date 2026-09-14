@@ -1392,6 +1392,313 @@ standup-pptx) correctly 405 on GET — plus the full existing regression
 suite still passes against the local preview server with zero console
 errors.
 
+## 21. Team-prioritization pass: Weekly Activity sort, Deep Dive maximize + cover photo, Weekly Priorities, cross-tab dated items, editable tasks, Idea Dumps edit
+
+A follow-up batch aimed at making Weekly Activity and the Deep Dive actually
+drive team prioritization, plus a round of smaller fixes:
+
+- **Weekly Activity sort order** — projects with real movement this week (a
+  WBS tree or flat updates) now sort above ones showing "Nothing starting or
+  due this week yet," so a PM scanning for prioritization decisions sees the
+  busy projects first (`renderWeekly` in `dashboard.js`).
+- **Deep Dive opens maximized** — `.deepdive-panel` fills the viewport
+  instead of floating as an 880px-wide centered dialog; closing it reverts to
+  the normal dashboard underneath, same as before.
+- **Deep Dive cover photo** — a new, larger per-project banner image
+  (`data.coverPhoto`, downscaled client-side to a 1600px long edge before
+  storing), separate from the existing small 56×56 header icon/emoji. Shown
+  at the top of the modal with its own upload/remove controls.
+- **Checklist items can now carry a due date** — the checklist item add-form
+  gained a date input (matching Tooling/Lab's task-add form), stored as
+  `dueDate` on each custom checklist item.
+- **"Other open items this week" panel** (Weekly Activity tab) — aggregates
+  anything with a due date in the current Monday–Sunday window from local
+  Tooling/Lab tasks, Checklist items, and Idea Dumps submissions (via
+  `/api/ideas`), none of which live in the ClickUp-sourced `/api/weekly`
+  response. Shown as its own list above the per-project cards, since Idea
+  Dumps items aren't tied to any one project.
+- **New "Weekly Priorities" tab** — a live table styled after the CRCA
+  Diffuser / Sahel Stove roadmap slides (Key Function / Team
+  Utilization-per-Week / Activities / Priority), grouped by project. Rows
+  come straight from each project's own Deep Dive **Cost & Resource** tab
+  (`role` → Key Function, `effort` → Team Utilization/Week, `notes` →
+  Activities) and the **Priority** column pulls from that project's Deep Dive
+  Priority tab (the first unresolved open question if there is one, else the
+  priority score/notes) — so filling in a project's Deep Dive is what
+  populates this table, rather than re-typing the same content twice. A
+  project with no Cost & Resource rows yet shows a prompt linking straight
+  into its Deep Dive. Includes a "Download table (HTML)" export in the same
+  layout.
+- **Click-to-edit task/checklist text** — Tooling/Lab task items and
+  Checklist custom items can now be edited in place by clicking their text
+  (swaps to an inline input; Enter/blur saves, Escape cancels). Standard
+  (non-custom) checklist template items are unaffected, matching how removal
+  already worked.
+- **Idea Dumps: edit past submissions** — each submitted idea now has an
+  "Edit" button that opens an inline form (title/product/category/target
+  date/description, pre-filled from the fields the backend parses back out
+  of the ClickUp task's description) and saves via a new `PUT /api/ideas`
+  endpoint (`ideas.js`'s `updateTask` path). Works against the mock/preview
+  data too when `CLICKUP_INTAKE_LIST_ID` isn't configured yet.
+- **Idea Dumps "Team not authorized" (401 / OAUTH_027) errors** — `ideas.js`
+  now rewrites that specific ClickUp error into an actionable message: it
+  means `CLICKUP_API_TOKEN` doesn't have access to whatever list
+  `CLICKUP_INTAKE_LIST_ID` points to. The most common cause is that env var
+  still being set to the `123456789` placeholder from `.env.example`, or
+  pointing at a list in a different ClickUp workspace than the token
+  belongs to — check both under Vercel/Netlify's environment variable
+  settings. This is a deployment-configuration issue, not a code bug: the
+  create/list/update request logic itself was verified correct.
+- **ecoa logo "compression" in exports** — investigated and found no
+  re-encoding/resizing in either export path: both the HTML weekly summary
+  and the PPTX slides embed `public/assets/ecoa-logo.png`'s raw bytes as
+  base64, unmodified. The blurriness traced back to the source asset itself
+  (500×200px, generated rather than the real brand file) — replace
+  `public/assets/ecoa-logo.png` with a real high-resolution logo and both
+  exports will pick it up as-is, with zero re-processing.
+
+## 22. Unified square cover photo/thumbnail, live ClickUp Timeline feed, Product Backlog, and folding Weekly Priorities into the weekly export
+
+A follow-up pass that replaces two things introduced in section 21 (the
+separate small header icon and the large wide banner cover photo, and the
+standalone Weekly Priorities tab) with simpler, more useful equivalents, plus
+two new features that pull real ClickUp data into places that used to be
+entirely manual:
+
+- **One square cover photo, used everywhere** — the Deep Dive header's small
+  circular icon and the separate wide banner cover photo are gone, replaced
+  by a single square image box (`data.coverPhoto`, still downscaled
+  client-side to a 1600px long edge / JPEG q0.88 before storing) shown with
+  `object-fit: contain` on a neutral background — a good fit for the mostly
+  square product photos this is used for. This same image is now read with
+  priority everywhere a project's thumbnail appears (project cards, the
+  Resources kanban board), so uploading one photo in the Deep Dive updates
+  the thumbnail across the whole dashboard immediately. Projects without a
+  photo fall back to an emoji (pick one via "Choose emoji instead," or let it
+  default by category) exactly as before.
+- **Deep Dive Timeline: "Live from ClickUp"** — the Timeline tab now opens
+  with a read-only panel listing that project's actual open ClickUp subtasks
+  (name, status, due date), pulled from the same `/api/weekly` data the
+  Weekly Activity tab uses. The manually-curated phase list below it (the
+  original "phases this project actually moves through" tracker) is
+  unchanged and still fully editable — the live feed is reference
+  information sitting above it, not a replacement.
+- **Weekly Activity: Product Backlog panel** — a new collapsed-by-default
+  panel, styled like the existing "Other open items this week" panel, listing
+  every open ClickUp task that has neither a start date nor a due date set
+  (`flattenOpenTasks` in `transform.js` now carries `startDate`/`dueDate`/
+  `statusType` through so this and the live Timeline feed both have the
+  fields they need), grouped by project name. These are tasks that would
+  otherwise never surface anywhere in the dashboard, since every other view
+  (Weekly Activity, Gantt) is scoped to tasks that actually have dates.
+- **Weekly Priorities tab removed, folded into the weekly export instead** —
+  the standalone tab from section 21 is gone. The same information (Key
+  Function/Team Utilization rows from each project's Deep Dive Cost &
+  Resource tab, and a one-line Priority summary from its Priority tab) now
+  appears automatically above each project's task list in both the "Download
+  summary (HTML)" export and the "Download slides (.pptx)" export — so a
+  Deep Dive filled in once feeds the standup materials directly, without a
+  separate tab to keep in sync or click through during the week.
+
+**On the "ecoa logo" file attached for this batch**: it's byte-for-byte
+identical (same MD5 hash, 500×200px, 28,270 bytes) to the
+`public/assets/ecoa-logo.png` already in the repo — it doesn't fix the
+low-resolution issue flagged in section 21, since it's the same file. The
+real source/original brand asset (ideally higher resolution or vector) still
+needs to be located and swapped in.
+
+## 23. Cover photo crop + zoom, near-term/comprehensive Timeline split, a clearer Risk Signals panel, PPTX thumbnails, logo fixes, and backlog prioritization
+
+A follow-up pass responding to hands-on feedback on section 22's changes —
+mostly about making the Deep Dive genuinely easy to work in, plus a round
+of smaller clarity/correctness fixes:
+
+- **Deep Dive header redistributed** — the cover box, title/meta, and every
+  photo/ClickUp action now sit in three clear columns (photo | title+meta+
+  quick facts | actions) instead of actions being crammed under the title
+  text. A new **quick facts** strip under the title/gate pills pulls a
+  one-line summary straight from that project's own Cost & Resource
+  (team/effort chips) and Priority tabs, so a PM scanning between projects
+  sees "who's on this and what's the live call" without clicking into
+  either tab.
+- **Cover photo crop tool** — uploading a photo (or clicking the new
+  "Recrop" button on an existing one) now opens a small drag-to-reposition,
+  slider-to-zoom cropper before anything is saved, instead of just
+  downscaling whatever was selected. No library — a fixed square viewport,
+  pointer-event dragging, and a CSS transform on the source image, with
+  "Save photo" rendering the chosen crop onto a 1600×1600 canvas
+  (`wireCoverCropper`/`openCoverCropper` in `dashboard.js`).
+- **Click-to-zoom lightbox** — clicking the cover photo (once one is set)
+  opens it full-size in a simple overlay, since the ~180px header tile is
+  too small to actually inspect a product photo. Escape closes the
+  lightbox/crop tool first, not the whole Deep Dive underneath it.
+- **Deep Dive Timeline split into near-term + comprehensive** — the single
+  "Live from ClickUp" feed is now a **Near-term (next 30 days)** list (the
+  stuff to act on this cycle) plus a **Comprehensive timeline** underneath
+  it: a mini Gantt bar chart, scoped to this project's own dated tasks,
+  reusing the exact same visual language as the main Gantt tab (quarter/
+  month header, shaded bands, a today line, dashed bars for an assumed
+  start date) at a smaller scale (`deepDiveMiniGanttHtml`). Fixed a real
+  bug surfaced while building this: `openTasks`' `startDate`/`dueDate`
+  come through as epoch-ms numbers, not ISO strings, and the near-term
+  filter was parsing them with `Date.parse()` (silently `NaN` on a number)
+  instead of `new Date()` — so every dated task was invisible until this
+  was corrected.
+- **Live Risk Signals panel decluttered** — "Total at risk" used to sit as
+  one tile among five identically-sized ones, several of which (Gate
+  nearing, Needs mitigation) could show the exact same number as the
+  total, reading as a mix-up. It's now one large hero stat with the
+  individual reasons (Behind schedule, Flagged in ClickUp, Gate nearing,
+  Needs mitigation) shown underneath as a clearly labeled, visually
+  secondary breakdown, explicitly captioned as overlapping rather than
+  additive.
+- **Product Backlog: star + set-date-to-graduate** — each backlog item now
+  has a local star/highlight toggle (a PM's own priority flag, kept in
+  `localStorage`, since these are by definition tasks nobody's scheduled
+  yet) and an inline date field with a "Set date" button that writes the
+  real due date to the actual ClickUp task via the existing
+  `/api/gap-update` endpoint (the same one Decisions & Gaps uses) — once
+  that succeeds, the task naturally drops out of the backlog (it's no
+  longer undated) and starts showing up in Weekly Activity / the Deep
+  Dive Timeline feed instead.
+- **Weekly PPTX export carries the cover photo** — each project slide now
+  shows that project's square cover photo (when set) in the top-right
+  corner, shrunk to 300px/q0.82 client-side before the export POST so the
+  request body doesn't balloon with several full-size uploads.
+- **ecoa logo aspect ratio fixed in three places** — the source
+  `ecoa-logo.png` has generous internal padding plus a "stoves for life"
+  tagline that goes illegible once shrunk, which read as "compressed" in
+  the header, and the weekly HTML export's `.doc-header img` rule and the
+  PPTX title slide's `addImage` call both forced the ~2.5:1 image into a
+  literal square box, visibly squashing it. Added a wordmark-only crop
+  (`public/assets/ecoa-mark-header.png`, generated from the alpha-channel
+  bounding box of the "ecoa" glyphs alone) used in the app header, the
+  HTML export, and the PPTX title slide; all three now size it by its own
+  real aspect ratio (`height: auto` / a derived width) instead of a fixed
+  square or a too-small box. The full lockup (with tagline) is unchanged
+  and still used on the splash screen, where it's shown large enough to
+  read.
+
+## 24. Live Risk Signals redesign, and consolidating duplicate people in Live workload share
+
+Feedback on Live Risk Signals: the panel led with a dense paragraph of
+methodology text above the numbers, the "why" breakdown was a row of plain
+text pills with no visual weight next to the donut chart elsewhere on the
+tab, and there was no way to see *which* projects a given reason was
+actually counting — you had to cross-reference the table below by eye.
+Separately, Live workload share was showing what looked like repeated
+names and repeated projects in the same person's numbers.
+
+**Live Risk Signals**: the always-on methodology paragraph is now a single
+sentence, with the full explanation moved into a closed-by-default "How
+this is calculated" disclosure (same collapsible pattern as the Weekly
+Activity backlog) — nothing lost, just not pushing the actual numbers down
+the page by default. The hero number now sits inside a radial share-of-live-
+projects ring (the same gauge language the workload donut already uses, so
+the two panels read as one visual system), and the four reason "chips" are
+now real proportional bars sized as a share of the hero total. Each bar is
+also a button: clicking one highlights (not filters away) exactly which
+rows on the At-risk projects table it's counting — a left-accent border on
+the matches, the rest dimmed, plus a banner naming the active reason with a
+Clear button. Clicking the same bar again, or Clear, clears it.
+
+**Live workload share duplicates**: traced to a real data-shape gap, not a
+rendering bug. This ClickUp list's ownership signal comes from two
+different sources per task — the native Assignee field (a real ClickUp
+user id) and the "Assigned To (Multi)" custom field (a Labels field, whose
+ids point into that field's own fixed option list, not real user ids — see
+batch 19's notes). The exact same real person can appear in both, under
+two different id shapes, and the workload roster (`computeWorkload` in
+`netlify/functions/lib/transform.js`) was grouping by raw id — so one
+human could land as two separate rows: a duplicate slice/legend entry in
+the donut, and the same project double-counted against what was really one
+person's total. (`dashboard.js`'s `renderWorkloadKanban` had already worked
+around the task-matching half of this same split — see its comment there —
+but the roster itself wasn't fixed at the source.) Fixed in two places:
+`dedupeAssignees` now also collapses two entries with different ids but
+the same normalized (trimmed, case-insensitive) name, so a single task's
+own assignee list can't carry the same person twice; and `computeWorkload`
+now consolidates its whole roster by normalized name rather than raw id,
+so the same real person merges into one entry — one slice, one legend row,
+one correct total — regardless of which ClickUp field handed back which id
+for them on which project. Verified with a standalone unit test against
+both functions (two different-id, same-name assignees on different
+projects correctly merge into one person with the right total and no
+duplicate project listed); the mock/preview data used for the app's own
+Playwright regression has no such duplicates to begin with, so this one
+won't visibly change anything until it's run against the real ClickUp
+workspace where the duplication was reported.
+
+## 25. Deep Dive comprehensive timeline: a real month row, and "important day" markers
+
+Feedback, from screenshots of a roadmap-deck timeline for comparison: the
+Deep Dive's near-term list called itself "next 30 days," which read as
+"7 days" mentally rounded up and generally too loose to be "near-term" --
+90+ tasks routinely showed up in it. Separately, the comprehensive
+mini-Gantt below it only had a quarter header (no month-level detail) and
+no way to see which date on the timeline actually mattered, the way the
+reference deck's timeline called out specific dates ("closes December")
+with a labeled vertical marker instead of leaving the viewer to eyeball
+the axis.
+
+Near-term is now a 7-day window, but always shown as "next week" (never
+as a literal day count) -- `DEEPDIVE_NEAR_TERM_DAYS` is `7` under the
+hood, `DEEPDIVE_NEAR_TERM_LABEL` ("next week") is what actually renders.
+The comprehensive timeline now has the same two-tier quarter+month header
+the main Gantt tab already uses (ported over rather than duplicated --
+same `monthStart`/`monthEndExclusive` helpers, same `.gantt-months`/
+`.gantt-month` styling), so a bar's rough date reads without hovering for
+the tooltip. It also plots two labeled "important day" markers: Today
+(as before, now with a visible tag instead of a bare line) and this
+project's own next stage gate, when it falls in the plotted range --
+pulled straight from the project's `targetGateDate`/`currentGate`, no new
+data needed. The two tags stack vertically instead of overlapping when
+their dates land close together, which they often do (that's usually why
+the gate date matters in the first place). Everything in this view is
+also noticeably tighter than the main Gantt tab's own scale -- shorter
+bars, a narrower label column, smaller header text -- since it's a
+supporting view inside one project's Deep Dive, not the primary Gantt.
+
+## 26. Deep Dive typography harmony, "this week" matching the rest of the app, and hover-animated Portfolio Mix charts
+
+Three small-but-real inconsistencies, fixed together: the Comprehensive
+Timeline's row labels were rendering noticeably bigger than the near-term
+list right above them (a genuine bug -- `.deepdive-clickup-live-name` set
+no font-size of its own, so it inherited 12.5px in one context and the
+page's ~16px default in the other, purely by accident of which parent
+happened to be nearest); the Deep Dive's "near-term" window and Weekly
+Activity's "this week" meant two different date ranges for what should be
+the same phrase; and the Overview tab's Portfolio Mix panel was the one
+place in the app with charts that didn't react to a hover at all.
+
+`.deepdive-clickup-live-name` now has an explicit `font-size: 13px` --
+matching the main Gantt tab's own row-label size (`.gantt-row-label
+.project-link`) -- so a task's name reads the same size in the near-term
+list and the mini-Gantt below it, not whichever size its parent happened
+to cascade. Near-term's window is no longer a rolling "now + 7 days";
+it's the literal same Monday-through-Sunday range Weekly Activity already
+uses (`currentWeekBoundsMs`, mirroring `isIsoInCurrentWeek`'s existing
+math), so "this week" means one thing across the whole app instead of two
+slightly different ones under the same label. The upper bound moved from
+a rolling cutoff to the actual end of the calendar week; the (unchanged)
+lack of a lower bound still means anything overdue, however long overdue,
+stays in the list.
+
+Portfolio Mix's health donut (`buildDonut`) now uses the exact same
+`.donut-slice` hover class the Resources tab's workload donut already had
+(grow + brighten on hover) plus the same floating tooltip
+(`setupDonutHoverTooltip`, generalized to take a root/svg id pair and a
+label formatter instead of being hardcoded to the workload donut, and
+fixed to re-wire itself on every render rather than once at init -- this
+donut's wrapper gets its whole innerHTML replaced on each render, which
+would otherwise silently detach the previous hover listeners and tooltip
+element). Its hover growth is scaled down from the workload donut's
+(stroke-width 38 would swallow this donut's much smaller 6px-stroke ring)
+rather than sharing one absolute number. The "By stage gate" bars got the
+same treatment in their own idiom: hovering a row brings its bar to full
+opacity, brightens it, and grows it slightly taller, without disturbing
+the deliberate opacity gradient used to rank the other rows at rest.
+
 ## What's next: product lifecycle & project management
 
 The direction for this platform is a full **product lifecycle and project

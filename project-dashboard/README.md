@@ -1344,6 +1344,119 @@ question (strikethrough + tab flag clears), changing the icon (emoji and
 upload), and confirming edits persist across a close/reopen — zero console
 errors, both light and dark mode.
 
+## 20. Deploying to Vercel (in addition to Netlify)
+
+This project was originally Netlify-only: `netlify.toml` + `netlify/functions/*.js`
+using the Lambda-style `exports.handler = async (event) => ({statusCode,
+headers, body})` contract, with a `/api/*` → `/.netlify/functions/:splat`
+redirect that only Netlify understands. Deployed to Vercel as-is, `/api/*`
+resolves to nothing — Vercel expects serverless functions under an `/api`
+directory using its own `(req, res)` calling convention — so every
+`fetch("/api/...")` call fails and the dashboard shows "Error loading data"
+with every count at zero. That's what was happening; nothing was wrong with
+the ClickUp integration itself.
+
+Fixed by adding real Vercel support alongside the existing Netlify path,
+without forking any endpoint's logic into two copies that could drift:
+
+- Each `netlify/functions/*.js` file now also exports its handler as
+  `exports.handle` (in addition to the `exports.handler` Netlify looks for)
+  — a second name for the same function, not a behavior change.
+- A new `api/` directory holds one thin wrapper per endpoint
+  (`api/portfolio.js`, `api/weekly.js`, `api/ideas.js`, `api/registers.js`,
+  `api/gap-update.js`, `api/standup-pptx.js`), each importing the matching
+  `netlify/functions/*.js`'s `handle` and adapting Vercel's `(req, res)` call
+  into the Netlify-shaped `event` object that logic already expects (see
+  `api/_adapt.js` for the shared adapter — query string parsing, JSON body
+  round-tripping, and `isBase64Encoded` handling for the pptx export).
+- `vercel.json` sets `outputDirectory: "public"` so the static frontend
+  serves from the project root the same way Netlify's `publish = "public"`
+  does.
+
+Netlify deploys are unaffected — same files, same `exports.handler` entry
+point, same redirect. To deploy to Vercel: push/redeploy this project as-is
+(Vercel auto-detects the `api/*.js` functions and `vercel.json`'s output
+directory, zero extra config), then set the same environment variables
+`.env` would hold locally — `CLICKUP_API_TOKEN`, `CLICKUP_LIST_ID`, and
+optionally `CLICKUP_INTAKE_LIST_ID` / `CLICKUP_RISK_LIST_ID` /
+`CLICKUP_ISSUE_LIST_ID` / `CLICKUP_LESSON_LIST_ID` (see `.env.example`) —
+under the Vercel project's Settings → Environment Variables. Without those
+set, the dashboard now falls back to mock/preview data cleanly (matching
+local/Netlify behavior with no `.env`) rather than erroring.
+
+Verified locally: each `api/*.js` wrapper invoked directly with a stubbed
+`(req, res)` — GET endpoints (portfolio, weekly, ideas, registers) return
+200 with the expected mock payload, a missing `?type=` on registers returns
+its real 400 validation error, and POST-only endpoints (gap-update,
+standup-pptx) correctly 405 on GET — plus the full existing regression
+suite still passes against the local preview server with zero console
+errors.
+
+## 21. Team-prioritization pass: Weekly Activity sort, Deep Dive maximize + cover photo, Weekly Priorities, cross-tab dated items, editable tasks, Idea Dumps edit
+
+A follow-up batch aimed at making Weekly Activity and the Deep Dive actually
+drive team prioritization, plus a round of smaller fixes:
+
+- **Weekly Activity sort order** — projects with real movement this week (a
+  WBS tree or flat updates) now sort above ones showing "Nothing starting or
+  due this week yet," so a PM scanning for prioritization decisions sees the
+  busy projects first (`renderWeekly` in `dashboard.js`).
+- **Deep Dive opens maximized** — `.deepdive-panel` fills the viewport
+  instead of floating as an 880px-wide centered dialog; closing it reverts to
+  the normal dashboard underneath, same as before.
+- **Deep Dive cover photo** — a new, larger per-project banner image
+  (`data.coverPhoto`, downscaled client-side to a 1600px long edge before
+  storing), separate from the existing small 56×56 header icon/emoji. Shown
+  at the top of the modal with its own upload/remove controls.
+- **Checklist items can now carry a due date** — the checklist item add-form
+  gained a date input (matching Tooling/Lab's task-add form), stored as
+  `dueDate` on each custom checklist item.
+- **"Other open items this week" panel** (Weekly Activity tab) — aggregates
+  anything with a due date in the current Monday–Sunday window from local
+  Tooling/Lab tasks, Checklist items, and Idea Dumps submissions (via
+  `/api/ideas`), none of which live in the ClickUp-sourced `/api/weekly`
+  response. Shown as its own list above the per-project cards, since Idea
+  Dumps items aren't tied to any one project.
+- **New "Weekly Priorities" tab** — a live table styled after the CRCA
+  Diffuser / Sahel Stove roadmap slides (Key Function / Team
+  Utilization-per-Week / Activities / Priority), grouped by project. Rows
+  come straight from each project's own Deep Dive **Cost & Resource** tab
+  (`role` → Key Function, `effort` → Team Utilization/Week, `notes` →
+  Activities) and the **Priority** column pulls from that project's Deep Dive
+  Priority tab (the first unresolved open question if there is one, else the
+  priority score/notes) — so filling in a project's Deep Dive is what
+  populates this table, rather than re-typing the same content twice. A
+  project with no Cost & Resource rows yet shows a prompt linking straight
+  into its Deep Dive. Includes a "Download table (HTML)" export in the same
+  layout.
+- **Click-to-edit task/checklist text** — Tooling/Lab task items and
+  Checklist custom items can now be edited in place by clicking their text
+  (swaps to an inline input; Enter/blur saves, Escape cancels). Standard
+  (non-custom) checklist template items are unaffected, matching how removal
+  already worked.
+- **Idea Dumps: edit past submissions** — each submitted idea now has an
+  "Edit" button that opens an inline form (title/product/category/target
+  date/description, pre-filled from the fields the backend parses back out
+  of the ClickUp task's description) and saves via a new `PUT /api/ideas`
+  endpoint (`ideas.js`'s `updateTask` path). Works against the mock/preview
+  data too when `CLICKUP_INTAKE_LIST_ID` isn't configured yet.
+- **Idea Dumps "Team not authorized" (401 / OAUTH_027) errors** — `ideas.js`
+  now rewrites that specific ClickUp error into an actionable message: it
+  means `CLICKUP_API_TOKEN` doesn't have access to whatever list
+  `CLICKUP_INTAKE_LIST_ID` points to. The most common cause is that env var
+  still being set to the `123456789` placeholder from `.env.example`, or
+  pointing at a list in a different ClickUp workspace than the token
+  belongs to — check both under Vercel/Netlify's environment variable
+  settings. This is a deployment-configuration issue, not a code bug: the
+  create/list/update request logic itself was verified correct.
+- **ecoa logo "compression" in exports** — investigated and found no
+  re-encoding/resizing in either export path: both the HTML weekly summary
+  and the PPTX slides embed `public/assets/ecoa-logo.png`'s raw bytes as
+  base64, unmodified. The blurriness traced back to the source asset itself
+  (500×200px, generated rather than the real brand file) — replace
+  `public/assets/ecoa-logo.png` with a real high-resolution logo and both
+  exports will pick it up as-is, with zero re-processing.
+
 ## What's next: product lifecycle & project management
 
 The direction for this platform is a full **product lifecycle and project

@@ -185,3 +185,10 @@ exports.handler = async (event) => {
     return { statusCode: 500, headers: jsonHeaders, body: JSON.stringify({ error: err.message }) };
   }
 };
+
+// Also exposed as `handle` (not just `handler`) so api/*.js on Vercel can
+// import and call the exact same logic through a thin req/res adapter --
+// see api/_adapt.js. Netlify still finds this via `exports.handler` as
+// before; this is an additional reference to the same function, not a
+// behavior change.
+exports.handle = exports.handler;

@@ -219,7 +219,14 @@ h1, h2, h3, h4 { font-family: var(--font-heading); font-weight: 600; letter-spac
   gap: 14px;
   min-width: 0;
 }
-.brand-logo { height: 34px; width: auto; flex: none; }
+/* Header uses a wordmark-only crop (ecoa-mark-header.png) rather than the
+   full ecoa-logo.png lockup -- the full asset carries generous vertical
+   padding plus a "stoves for life" tagline that becomes an illegible smear
+   at header height, so it read as "compressed" next to the adjacent
+   "Biomass Portfolio Intelligence" text. The cropped mark fills its height
+   fully at a wider, more legible size; the full lockup (tagline included)
+   is still used on the splash screen where there's room for it to read. */
+.brand-logo { height: 30px; width: auto; flex: none; }
 .brand-divider { width: 1px; height: 26px; background: var(--gridline); flex: none; }
 
 .brand-row {
@@ -1010,6 +1017,10 @@ main {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Anchors the hover tooltip (position:absolute, see .donut-tooltip and
+     setupDonutHoverTooltip) the same way .viz-root already does for the
+     workload donut on the Resources tab. */
+  position: relative;
 }
 
 .chart-legend {
@@ -1066,12 +1077,27 @@ main {
 .bar-row .bar-fill {
   height: 100%;
   border-radius: 4px;
+  opacity: var(--bar-fill-opacity, 1);
+  transition: width .5s cubic-bezier(.22,1,.36,1), opacity 120ms ease, filter 120ms ease, transform 120ms ease;
+  transform-origin: left center;
 }
 .bar-row .bar-value {
   color: var(--text-muted);
   text-align: right;
   font-variant-numeric: tabular-nums;
+  transition: color 120ms ease;
 }
+/* Hovering a row "spotlights" its own bar (full opacity, a touch brighter
+   and taller) rather than just sitting static -- matches the hover-animate
+   treatment the donut above it and the rest of the app's charts already
+   have, so Portfolio Mix doesn't read as the one static panel. */
+.bar-row { cursor: default; }
+.bar-row:hover .bar-fill {
+  opacity: 1;
+  filter: brightness(1.15);
+  transform: scaleY(1.2);
+}
+.bar-row:hover .bar-value { color: var(--text-primary); }
 
 /* ---- kanban board (group-by view) --------------------------------------- */
 
@@ -1387,6 +1413,227 @@ main {
 }
 #risks-table .reason-chip { white-space: nowrap; }
 
+/* ---- Live Risk Signals: hero "Total at risk" + reason breakdown ----
+   Previously five same-size stat tiles side by side, one of which (Total
+   at risk) was really the union of the other four -- rendered as equal
+   peers it read as a mix-up (several tiles showing the same number). Now
+   the total is one large hero stat, with the reasons underneath sized and
+   labeled as a breakdown of it, explicitly called out as overlapping
+   rather than additive. */
+.risk-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 28px;
+}
+.risk-hero-main {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding-right: 24px;
+  border-right: 1px solid var(--gridline);
+}
+/* A radial "share of live projects" ring around the hero number -- the
+   same gauge language the workload donut already uses elsewhere on this
+   tab, so the two panels read as one visual system instead of one being a
+   chart and the other being plain text. Track + fill are two stacked full
+   circles; the fill's stroke-dasharray/dashoffset (set in JS, same circle
+   math as the donut) draws only its share of the ring, rotated -90deg so
+   it starts at 12 o'clock like the donut does. */
+.risk-hero-ring {
+  position: relative;
+  width: 112px;
+  height: 112px;
+}
+.risk-hero-ring-svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.risk-hero-ring-track {
+  fill: none;
+  stroke: var(--surface-2);
+  stroke-width: 12;
+}
+.risk-hero-ring-fill {
+  fill: none;
+  stroke: var(--status-critical);
+  stroke-width: 12;
+  stroke-linecap: round;
+  transition: stroke-dashoffset .6s cubic-bezier(.22,1,.36,1);
+}
+.risk-hero-ring-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.risk-hero-value {
+  font-family: var(--font-heading);
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: -.03em;
+  line-height: 1;
+  color: var(--status-critical);
+  font-variant-numeric: tabular-nums;
+}
+.risk-hero-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  max-width: 160px;
+  line-height: 1.3;
+  text-align: center;
+}
+.risk-hero-reasons {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+.risk-hero-reasons-title {
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+.risk-reason-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* Reason rows are real proportional bars (width = share of the hero total)
+   AND buttons -- clicking one highlights exactly which projects on the
+   table below it's counting, so "why is this number what it is" has a
+   direct, visual answer instead of just a static count. */
+.risk-reason-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: none;
+  border: 1px solid transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.risk-reason-bar:hover { background: var(--surface-2); }
+.risk-reason-bar-active {
+  background: var(--surface-2);
+  border-color: var(--status-critical);
+}
+.risk-reason-bar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.risk-reason-bar-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.risk-reason-bar-value {
+  font-family: var(--font-heading);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.risk-reason-bar-track {
+  height: 8px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  overflow: hidden;
+}
+.risk-reason-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  min-width: 4px;
+  transition: width .5s cubic-bezier(.22,1,.36,1);
+}
+.risk-reason-bar-fill.active { background: var(--series-1); }
+.risk-reason-bar-fill.delayed { background: var(--status-warning); }
+.risk-reason-bar-fill.atRisk { background: var(--status-critical); }
+@media (max-width: 640px) {
+  .risk-hero-main { border-right: none; padding-right: 0; }
+}
+
+/* A short, closed-by-default disclosure for the full risk methodology --
+   the always-on paragraph this replaced was the single densest block of
+   text on the tab; anyone who wants the detail can still get it, but it no
+   longer pushes the actual numbers down the page by default. Reuses the
+   same "▸" summary-marker treatment as the Weekly Activity backlog
+   disclosure so collapsible sections look consistent app-wide. */
+.risk-hero-details { margin-top: 14px; }
+.risk-hero-details-summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.risk-hero-details-summary::-webkit-details-marker { display: none; }
+.risk-hero-details-summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 6px;
+  transition: transform .15s;
+}
+.risk-hero-details[open] .risk-hero-details-summary::before { transform: rotate(90deg); }
+.risk-hero-details p {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  max-width: 72ch;
+}
+
+/* Clicking a reason bar highlights exactly the rows it's counting on the
+   At-risk projects table below, rather than filtering the rest away --
+   "captured by this reason" stays visible in context, just visually
+   receded, instead of disappearing. */
+.risk-filter-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -4px 0 14px;
+  padding: 9px 14px;
+  border-radius: var(--card-radius);
+  background: color-mix(in srgb, var(--status-critical) 10%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--status-critical) 30%, var(--gridline));
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.risk-filter-clear {
+  flex: none;
+  padding: 4px 10px;
+  border-radius: 99px;
+  border: 1px solid var(--gridline);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font: inherit;
+  font-weight: 600;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.risk-filter-clear:hover { color: var(--text-primary); border-color: var(--text-muted); }
+#risks-table tbody tr { transition: opacity .15s, background .15s; }
+#risks-table tbody tr.risk-row-match {
+  background: color-mix(in srgb, var(--status-critical) 8%, transparent);
+  box-shadow: inset 3px 0 0 var(--status-critical);
+}
+#risks-table tbody tr.risk-row-dim { opacity: .35; }
+
 /* ---- Risk Register: health-bucket horizontal bar chart ---- */
 .hbar-chart {
   display: flex;
@@ -1490,6 +1737,21 @@ main {
 .ideas-list .idea-meta { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 .ideas-list .idea-desc { font-size: 12px; color: var(--text-secondary); margin-top: 6px; white-space: pre-wrap; }
 .ideas-list .idea-mock-note { display: inline-block; margin-top: 6px; font-size: 11px; color: var(--status-warning); }
+.idea-edit-btn {
+  float: right;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.idea-edit-btn:hover { color: var(--text-primary); border-color: var(--brand-accent); }
+.idea-edit-form .form-actions { margin-top: 8px; }
+.idea-edit-status.error { color: var(--status-critical); }
 
 /* stage-bar / stage-step are shared with the single-project detail view
    (projectDetailHtml in dashboard.js) -- the "Projects Update" tab that
@@ -1550,6 +1812,12 @@ main {
   cursor: pointer;
 }
 .donut-slice:hover { stroke-width: 38; filter: brightness(1.12); }
+/* The Portfolio Mix health donut (Overview tab) reuses .donut-slice for the
+   exact same hover-grows-and-brightens treatment, but its viewBox and base
+   stroke (6, vs. the workload donut's 32) are much smaller -- the same
+   absolute hover width above would swallow this whole chart, so it gets
+   its own, proportionate hover width instead. */
+#health-donut .donut-slice:hover { stroke-width: 7.4; }
 
 .weekly-load-grid {
   display: grid;
@@ -1817,6 +2085,125 @@ main {
 .weekly-card-title { font-weight: 600; color: var(--text-primary); text-decoration: none; }
 .weekly-card-title:hover { color: var(--brand-accent); }
 .weekly-card-meta { font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 4px; }
+.weekly-backlog-panel { margin-bottom: 14px; }
+.weekly-backlog-summary {
+  cursor: pointer;
+  list-style: none;
+}
+.weekly-backlog-summary::-webkit-details-marker { display: none; }
+.weekly-backlog-summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--text-muted);
+  transition: transform .15s;
+}
+#weekly-backlog-details[open] .weekly-backlog-summary::before { transform: rotate(90deg); }
+.weekly-backlog-group { margin-bottom: 14px; }
+.weekly-backlog-group:last-child { margin-bottom: 0; }
+.weekly-backlog-group-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+.weekly-backlog-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.weekly-backlog-item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  padding: 6px 10px;
+  border: 1px solid var(--gridline-soft);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+/* Starring is local-only (see BACKLOG_STARS_KEY) -- a PM's own note of
+   which undated tasks actually matter, distinct from setting a real date
+   below (which writes to ClickUp and graduates the item out of here). */
+.weekly-backlog-item-starred {
+  border-color: color-mix(in srgb, var(--brand-accent) 45%, var(--gridline-soft));
+  background: var(--brand-tint);
+}
+.weekly-backlog-star {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-muted);
+  padding: 0;
+}
+.weekly-backlog-star[aria-pressed="true"] { color: var(--brand-accent); }
+.weekly-backlog-star:hover { color: var(--brand-accent-deep); }
+.weekly-backlog-item-name { flex: 1 1 auto; min-width: 120px; }
+/* Setting a date here is a real write -- it PUTs the date to the actual
+   ClickUp task via /api/gap-update, same endpoint Decisions & Gaps uses,
+   and the item leaves this list once it succeeds (see saveBacklogDate). */
+.weekly-backlog-date-form {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.weekly-backlog-date-input {
+  font-family: inherit;
+  font-size: 11.5px;
+  padding: 4px 6px;
+  border-radius: 7px;
+  border: 1px solid var(--gridline);
+  background: var(--surface-1);
+  color: var(--text-primary);
+}
+.weekly-backlog-date-save {
+  font-size: 11px;
+  padding: 4px 9px;
+}
+.weekly-backlog-status { font-size: 11px; color: var(--text-muted); }
+.weekly-backlog-status-ok { color: var(--status-good-ink); }
+.weekly-backlog-status-info { color: var(--text-muted); font-style: italic; }
+.weekly-backlog-status-error { color: var(--status-critical); }
+.weekly-other-panel { margin-bottom: 14px; }
+.weekly-other-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.weekly-other-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  padding: 8px 12px;
+  border: 1px solid var(--gridline-soft);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.weekly-other-source {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--text-secondary);
+  background: var(--surface-1);
+  border: 1px solid var(--gridline);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.weekly-other-project { color: var(--text-secondary); white-space: nowrap; }
+.weekly-other-text { flex: 1; color: var(--text-primary); }
 .weekly-update-list {
   list-style: none;
   margin: 0;
@@ -2309,7 +2696,17 @@ main {
 }
 .checklist-remove-btn:hover { color: var(--status-critical); }
 
-.checklist-add-form { margin-top: 8px; }
+.checklist-add-form { margin-top: 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.checklist-add-form .checklist-add-input { flex: 1 1 220px; width: auto; }
+.checklist-add-date {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--surface-2);
+  border: 1px dashed var(--gridline);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
 .checklist-add-input {
   width: 100%;
   font-family: inherit;
@@ -2321,6 +2718,21 @@ main {
   padding: 7px 10px;
 }
 .checklist-add-input:focus { outline: none; border-color: var(--brand-accent); border-style: solid; }
+
+.checklist-item-text { cursor: text; border-radius: 4px; padding: 1px 3px; margin: -1px -3px; }
+.checklist-item-text:hover { background: var(--surface-2); }
+.inline-edit-input {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border: 1px solid var(--brand-accent);
+  border-radius: 4px;
+  padding: 1px 3px;
+  width: 100%;
+  max-width: 260px;
+}
+.inline-edit-input:focus { outline: none; }
 
 /* Undo for "not applicable to this project" -- shown only once at least
    one standard item has been hidden, so a card that's fully stock never
@@ -2527,7 +2939,7 @@ main {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 4vh 16px;
+  padding: 0;
   z-index: 200;
   overflow-y: auto;
   animation: deepdive-fade-in .18s ease-out;
@@ -2535,17 +2947,25 @@ main {
 .deepdive-overlay[hidden] { display: none; }
 @keyframes deepdive-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
+/* Deep Dive opens maximized -- fills the viewport instead of floating as a
+   centered dialog, so there's real room for the Scope/Timeline/Cost &
+   Resource/Impact/Priority tabs on a real project. Closing the modal (see
+   closeDeepDive) just hides #deepdive-overlay again, which reverts the
+   screen to the normal dashboard view underneath -- nothing here needs to
+   "un-maximize" on the way out. */
 .deepdive-panel {
   position: relative;
-  width: min(880px, 100%);
-  max-height: 92vh;
+  width: 100%;
+  max-width: 100%;
+  min-height: 100vh;
+  max-height: none;
   display: flex;
   flex-direction: column;
   background: var(--surface-solid);
-  border: 1px solid var(--gridline);
-  border-radius: var(--card-radius);
-  box-shadow: var(--shadow-card-lg);
-  padding: 26px 28px 18px;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 26px clamp(20px, 5vw, 64px) 18px;
   animation: deepdive-pop-in .22s cubic-bezier(.2,.8,.3,1);
 }
 @keyframes deepdive-pop-in {
@@ -2570,30 +2990,75 @@ main {
 }
 .deepdive-close:hover { background: var(--status-critical); color: #fff; transform: rotate(90deg); }
 
+/* Three columns -- cover | title/meta/quick-facts | actions -- instead of
+   the previous cover + text column (with photo actions crammed under the
+   title, and "Open in ClickUp" pinned far right on its own). Info reads
+   top-to-bottom in the middle column now; every action (photo edits, the
+   ClickUp link) lives in its own right-hand column so it never competes
+   with the title for space. */
 .deepdive-header {
   display: flex;
   align-items: flex-start;
-  gap: 16px;
+  gap: 20px;
   padding-right: 34px;
 }
-.deepdive-icon-btn {
+/* One square image -- most product photos on these projects are already
+   square studio shots, so object-fit:contain on a neutral tile shows the
+   whole product without the crop/zoom a wide banner forced. This same
+   element doubles as the small thumbnail reused everywhere else (see
+   deepDiveIconHtml in dashboard.js), so there's exactly one photo to keep
+   current instead of a separate banner + icon. It's a <button> now (was a
+   plain div) so clicking it opens the full-size lightbox -- see
+   #cover-lightbox-overlay and wireCoverCropper in dashboard.js. */
+.deepdive-cover {
+  position: relative;
   flex: none;
-  width: 56px;
-  height: 56px;
-  border-radius: 16px;
+  width: clamp(120px, 16vw, 190px);
+  aspect-ratio: 1 / 1;
+  border-radius: var(--card-radius);
+  overflow: hidden;
+  background: var(--surface-2);
   border: 1px solid var(--gridline);
-  background: var(--brand-tint);
-  font-size: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-  overflow: hidden;
-  transition: transform .15s, box-shadow .15s;
+  padding: 0;
+  margin: 0;
+  cursor: default;
+  font-family: inherit;
+  appearance: none;
+  -webkit-appearance: none;
 }
-.deepdive-icon-btn:hover { transform: scale(1.05); box-shadow: 0 4px 14px rgba(21,23,28,.12); }
-.deepdive-icon-btn img { width: 100%; height: 100%; object-fit: cover; }
-.deepdive-header-text { flex: 1; min-width: 0; }
+.deepdive-cover:has(img:not([hidden])) { cursor: zoom-in; }
+.deepdive-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #fff;
+}
+.deepdive-cover-emoji {
+  font-size: clamp(48px, 8vw, 84px);
+  line-height: 1;
+}
+.deepdive-cover-zoom-hint {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(12, 14, 18, 0.55);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity .15s;
+  pointer-events: none;
+}
+.deepdive-cover:hover .deepdive-cover-zoom-hint { opacity: 1; }
+.deepdive-header-text { flex: 1; min-width: 0; padding-top: 2px; }
 .deepdive-eyebrow {
   font-size: 11px;
   font-weight: 700;
@@ -2610,6 +3075,66 @@ main {
   line-height: 1.25;
 }
 .deepdive-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Snapshot of this project's own Cost & Resource / Priority tabs, pulled
+   into the header so a PM can see "who's on this and what's the live call"
+   without clicking into either tab -- same source data the weekly export
+   uses (priorityColumnText, costResource.rows). Empty until those tabs
+   have something in them. */
+.deepdive-quick-facts { margin-top: 10px; }
+.deepdive-fact-group { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.deepdive-fact-chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: var(--pill-radius);
+  background: var(--surface-2);
+  border: 1px solid var(--gridline-soft);
+  color: var(--text-secondary);
+}
+.deepdive-fact-priority {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--brand-accent-deep);
+  background: var(--brand-tint);
+  border-radius: 10px;
+  padding: 6px 10px;
+  max-width: 520px;
+}
+.deepdive-fact-empty { font-size: 11.5px; color: var(--text-muted); font-style: italic; }
+.deepdive-header-actions {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+.deepdive-cover-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+  max-width: 260px;
+}
+.deepdive-cover-upload-label,
+.deepdive-cover-recrop,
+.deepdive-cover-remove,
+.deepdive-cover-emoji-btn {
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--gridline);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.deepdive-cover-upload-label:hover,
+.deepdive-cover-recrop:hover,
+.deepdive-cover-remove:hover,
+.deepdive-cover-emoji-btn:hover { color: #fff; background: var(--brand-accent); border-color: var(--brand-accent); }
 .deepdive-clickup-link {
   flex: none;
   font-size: 12px;
@@ -2623,6 +3148,110 @@ main {
   transition: color .15s, border-color .15s;
 }
 .deepdive-clickup-link:hover { color: var(--brand-accent-deep); border-color: var(--brand-accent); }
+@media (max-width: 760px) {
+  .deepdive-header { flex-wrap: wrap; }
+  .deepdive-header-actions { align-items: flex-start; }
+  .deepdive-cover-actions { justify-content: flex-start; max-width: none; }
+}
+
+/* ---- Cover photo lightbox ---- */
+.lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(8, 9, 12, 0.86);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  animation: deepdive-fade-in .15s ease-out;
+}
+.lightbox-overlay[hidden] { display: none; }
+.lightbox-img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  background: #fff;
+}
+.lightbox-close {
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .15s, transform .15s;
+}
+.lightbox-close:hover { background: var(--status-critical); transform: rotate(90deg); }
+
+/* ---- Cover photo crop tool ----
+   A minimal drag-to-reposition + slider-to-zoom cropper (see
+   wireCoverCropper in dashboard.js) -- no library, just pointer events on
+   a fixed square viewport and a CSS transform on the image inside it. */
+.crop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(8, 9, 12, 0.7);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: deepdive-fade-in .15s ease-out;
+}
+.crop-overlay[hidden] { display: none; }
+.crop-panel {
+  width: min(420px, 100%);
+  background: var(--surface-solid);
+  border-radius: var(--card-radius);
+  border: 1px solid var(--gridline);
+  padding: 20px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+.crop-panel h3 { margin: 0 0 6px; font-family: var(--font-heading); font-size: 17px; color: var(--text-primary); }
+.crop-hint { font-size: 12px; color: var(--text-muted); margin: 0 0 14px; line-height: 1.45; }
+.crop-viewport {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #111;
+  position: relative;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.crop-viewport.crop-dragging { cursor: grabbing; }
+.crop-viewport img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  max-width: none;
+  pointer-events: none;
+}
+.crop-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+.crop-zoom-icon { font-size: 14px; color: var(--text-muted); flex: none; }
+.crop-controls input[type="range"] { flex: 1; accent-color: var(--brand-accent); }
+.crop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
 
 .deepdive-icon-picker {
   margin-top: 10px;
@@ -2654,16 +3283,6 @@ main {
 }
 .deepdive-icon-option:hover { transform: translateY(-1px); border-color: var(--brand-accent); }
 .deepdive-icon-picker-row { display: flex; align-items: center; gap: 8px; }
-.deepdive-icon-upload-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  border: 1px dashed var(--border);
-  border-radius: 8px;
-  padding: 6px 10px;
-  cursor: pointer;
-}
-.deepdive-icon-upload-label:hover { color: var(--brand-accent-deep); border-color: var(--brand-accent); }
 .deepdive-icon-reset-btn {
   font-size: 12px;
   font-weight: 600;
@@ -2722,6 +3341,116 @@ main {
   color: var(--text-muted);
   margin: 0 0 14px;
   line-height: 1.5;
+}
+/* Read-only "Live from ClickUp" feed at the top of the Timeline tab -- a
+   distinct visual treatment (tinted panel) so it reads as synced data, not
+   another editable field like everything below it. */
+.deepdive-clickup-live {
+  background: var(--brand-tint);
+  border: 1px solid var(--gridline-soft);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 18px;
+}
+.deepdive-clickup-live-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: var(--brand-accent-deep);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.deepdive-clickup-live-count { font-weight: 600; color: var(--text-muted); text-transform: none; letter-spacing: 0; }
+.deepdive-clickup-live-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.deepdive-clickup-live-item { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+/* Explicit size rather than left to inherit -- this span is used both in
+   the near-term list (inside .deepdive-clickup-live-item, 12.5px) and as a
+   Comprehensive Timeline row label (inside .gantt-row-label, which sets no
+   font-size of its own and was falling back to the page's ~16px default,
+   visibly bigger/out of step with everything else in this section). Pinned
+   to match the main Gantt tab's own row-label size (.gantt-row-label
+   .project-link, 13px) so a task's name reads the same size everywhere in
+   the Deep Dive's Timeline tab, not just wherever it happens to be nested. */
+.deepdive-clickup-live-name { color: var(--text-primary); flex: 1; font-size: 13px; }
+.deepdive-clickup-live-status { font-size: 11px; color: var(--text-muted); font-family: var(--mono); white-space: nowrap; }
+.deepdive-clickup-live-date { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
+.deepdive-clickup-live-more { font-size: 11.5px; color: var(--text-muted); margin-top: 6px; }
+.deepdive-clickup-live-note { font-size: 12px; color: var(--text-muted); }
+
+/* Comprehensive timeline -- a mini Gantt scoped to this project's own
+   dated ClickUp tasks, sitting below the near-term list. Reuses the exact
+   .gantt-* classes/markup shape from the main Gantt tab (see renderGantt)
+   so it reads as the same visual language at a smaller scale, rather than
+   inventing a second timeline look. */
+.deepdive-gantt-block { margin-bottom: 18px; }
+.deepdive-gantt-block .deepdive-clickup-live-title { color: var(--brand-accent-deep); }
+.deepdive-gantt-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid var(--gridline-soft);
+  border-radius: 12px;
+  background: var(--surface-1);
+}
+.deepdive-gantt-scroll .gantt-inner { position: relative; min-width: 100%; width: max-content; }
+/* Tighter than the main Gantt tab on every axis -- this is a supporting
+   view inside one project's Deep Dive, not the primary Gantt tab, so it
+   doesn't need that tab's full row/header scale. */
+.deepdive-gantt-scroll .gantt-row-track { min-height: 26px; }
+.deepdive-gantt-scroll .gantt-bar { height: 13px; }
+.deepdive-gantt-scroll .gantt-row-label { width: 170px; padding: 4px 10px; }
+.deepdive-gantt-scroll .gantt-quarters { height: 24px; }
+.deepdive-gantt-scroll .gantt-months { height: 18px; }
+.deepdive-gantt-scroll .gantt-quarter { font-size: 10px; padding-left: 8px; }
+.deepdive-gantt-scroll .gantt-month { font-size: 9px; padding-left: 6px; }
+
+/* "Important day" markers (today + this project's own next stage gate) --
+   a labeled vertical line each, same idea as a roadmap deck calling out
+   specific dates on a timeline rather than leaving them to be eyeballed
+   against the axis. Today reuses the app's existing accent color; the
+   gate marker gets its own (status-critical, dashed) so the two are never
+   ambiguous at a glance. */
+.deepdive-gantt-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* Above .gantt-header's own z-index:4 (it's opaque + sticky) so the line
+     and its tag read clearly all the way from the top of the chart, not
+     just the scrollable body below the header -- otherwise the tag (and
+     the top of the line) render invisibly behind the header's background. */
+  z-index: 5;
+  width: 0;
+  pointer-events: none;
+  border-left: 2px solid var(--brand-accent);
+}
+.deepdive-gantt-marker-gate {
+  border-left-color: var(--status-critical);
+  border-left-style: dashed;
+}
+.deepdive-gantt-marker-tag {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  transform: translateX(-50%);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: var(--mono);
+  color: #fff;
+  background: var(--brand-accent);
+  white-space: nowrap;
+  z-index: 4;
+}
+/* Today and a project's own next gate are often close together on a
+   dated-tasks range -- that's usually the whole reason the gate matters --
+   so the gate tag sits a row lower than today's rather than risking the
+   two labels overlapping when their lines land only a few pixels apart. */
+.deepdive-gantt-marker-gate .deepdive-gantt-marker-tag {
+  top: 19px;
+  background: var(--status-critical);
 }
 .deepdive-field-label {
   font-size: 11px;
