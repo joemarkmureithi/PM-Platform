@@ -87,6 +87,25 @@ function titleSlide(pptx, data) {
   slide.addText("Weekly Standup Summary", { x: 0.5, y: 2.05, w: 9, h: 0.8, fontSize: 32, bold: true, color: INK });
   slide.addText(data.weekLabel || "", { x: 0.5, y: 2.85, w: 9, h: 0.5, fontSize: 16, color: MUTED });
   slide.addText(`Generated ${data.generatedAt || ""}`, { x: 0.5, y: 3.3, w: 9, h: 0.4, fontSize: 12, color: MUTED });
+
+  // Same "how big a week is this" numbers the HTML export leads with (see
+  // the .stat-strip in dashboard.js's renderStandupSummaryHtml) -- so a
+  // reader flipping straight to the title slide in a screen-share gets the
+  // same at-a-glance read the HTML version opens with, instead of having
+  // to click through every project slide first to find out.
+  const stats = [
+    { value: (data.projects || []).length, label: "Active projects" },
+    { value: (data.risks || []).length, label: "Open risks" },
+    { value: (data.gaps || []).length, label: "Planning gaps" },
+  ];
+  const statW = 2.6;
+  stats.forEach((s, i) => {
+    const x = 0.5 + i * (statW + 0.2);
+    slide.addShape("roundRect", { x, y: 3.85, w: statW, h: 1.0, fill: { color: "FFFFFF" }, line: { color: ACCENT_TINT, width: 1 }, rectRadius: 0.08 });
+    slide.addText(String(s.value), { x, y: 3.95, w: statW, h: 0.5, fontSize: 24, bold: true, color: ACCENT_DEEP, align: "center" });
+    slide.addText(s.label, { x, y: 4.45, w: statW, h: 0.3, fontSize: 10.5, color: MUTED, align: "center" });
+  });
+
   accentRule(slide, 5.57);
 }
 
@@ -190,18 +209,42 @@ function projectSlide(pptx, p) {
   accentRule(slide, 5.57);
 }
 
+// A PowerPoint text box has a fixed height and does not auto-shrink its
+// text or scroll the way the HTML export's <ul> does -- a risks/gaps list
+// longer than what fits in one box used to just run off the bottom of the
+// slide and disappear, with nothing on screen suggesting there was more.
+// Splitting across as many slides as needed (continuing the same title)
+// means everything the HTML export shows, the deck shows too. 10 rows is a
+// conservative estimate for how many single-ish-line 13pt bullets fit in
+// the 4.15in-tall box below the title -- a long-text row can still wrap to
+// two lines and use more of that room, so this errs toward more slides
+// rather than risking a repeat of the original overflow.
+const BULLET_ROWS_PER_SLIDE = 10;
+
 function bulletSlide(pptx, title, rows, emptyText) {
-  const slide = pptx.addSlide();
-  slide.background = { color: SLIDE_BG };
-  slide.addText(title, { x: 0.4, y: 0.3, w: 9.2, h: 0.5, fontSize: 20, bold: true, color: ACCENT_DEEP });
-  accentRule(slide, 0.9);
-  if (rows.length) {
-    const lines = rows.map((text) => ({ text, options: { bullet: true, fontSize: 13, breakLine: true, color: "333333" } }));
-    slide.addText(lines, { x: 0.5, y: 1.15, w: 9, h: 4.15, valign: "top" });
-  } else {
+  if (!rows.length) {
+    const slide = pptx.addSlide();
+    slide.background = { color: SLIDE_BG };
+    slide.addText(title, { x: 0.4, y: 0.3, w: 9.2, h: 0.5, fontSize: 20, bold: true, color: ACCENT_DEEP });
+    accentRule(slide, 0.9);
     slide.addText(emptyText, { x: 0.5, y: 1.15, w: 9, h: 0.5, fontSize: 13, italic: true, color: MUTED });
+    accentRule(slide, 5.57);
+    return;
   }
-  accentRule(slide, 5.57);
+  const chunks = [];
+  for (let i = 0; i < rows.length; i += BULLET_ROWS_PER_SLIDE) {
+    chunks.push(rows.slice(i, i + BULLET_ROWS_PER_SLIDE));
+  }
+  chunks.forEach((chunk, idx) => {
+    const slide = pptx.addSlide();
+    slide.background = { color: SLIDE_BG };
+    const slideTitle = chunks.length > 1 ? `${title} (${idx + 1}/${chunks.length})` : title;
+    slide.addText(slideTitle, { x: 0.4, y: 0.3, w: 9.2, h: 0.5, fontSize: 20, bold: true, color: ACCENT_DEEP });
+    accentRule(slide, 0.9);
+    const lines = chunk.map((text) => ({ text, options: { bullet: true, fontSize: 13, breakLine: true, color: "333333" } }));
+    slide.addText(lines, { x: 0.5, y: 1.15, w: 9, h: 4.15, valign: "top" });
+    accentRule(slide, 5.57);
+  });
 }
 
 exports.handler = async (event) => {

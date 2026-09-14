@@ -1750,6 +1750,38 @@ main {
   cursor: pointer;
 }
 .idea-edit-btn:hover { color: var(--text-primary); border-color: var(--brand-accent); }
+/* A submission that couldn't reach ClickUp (list not configured, or the
+   request failed outright) but got a local backup instead -- see
+   saveLocalBackupEntry in dashboard.js. Amber like the rest of the app's
+   "needs attention, not broken" signals, with a dashed left border on the
+   list item so it visually stands apart from a normal saved entry without
+   looking like an error. */
+.ideas-list li.local-backup-item { border-left-style: dashed; border-left-color: var(--status-warning); }
+.local-backup-badge {
+  display: inline-block;
+  float: right;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .02em;
+  color: var(--status-warning-ink);
+  background: color-mix(in srgb, var(--status-warning) 18%, transparent);
+  border-radius: 999px;
+  padding: 3px 9px;
+  margin-left: 6px;
+}
+.local-backup-dismiss {
+  float: right;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.local-backup-dismiss:hover { color: var(--status-critical); }
 .idea-edit-form .form-actions { margin-top: 8px; }
 .idea-edit-status.error { color: var(--status-critical); }
 
@@ -2172,6 +2204,18 @@ main {
 .weekly-backlog-status-info { color: var(--text-muted); font-style: italic; }
 .weekly-backlog-status-error { color: var(--status-critical); }
 .weekly-other-panel { margin-bottom: 14px; }
+#weekly-other-details[open] .weekly-backlog-summary::before { transform: rotate(90deg); }
+.weekly-other-group { margin-bottom: 14px; }
+.weekly-other-group:last-child { margin-bottom: 0; }
+.weekly-other-group-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
 .weekly-other-list {
   list-style: none;
   margin: 0;
@@ -2902,6 +2946,29 @@ main {
   cursor: pointer;
 }
 .project-task-add-btn:hover { border-color: var(--brand-accent); color: var(--brand-accent); }
+.project-task-add-status { font-size: 11px; color: var(--status-critical); flex-basis: 100%; }
+
+/* A task's date is always shown as a clickable chip (see
+   projectTaskItemHtml/beginInlineDateEdit) -- a due date is required on
+   every task now, so there's always something here to click, even a "No
+   date set" left over from before that requirement existed. */
+.task-date-chip {
+  font-family: inherit;
+  border: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.task-date-chip:hover { filter: brightness(1.08); text-decoration: underline; }
+.inline-edit-date-input {
+  font-family: inherit;
+  font-size: 11.5px;
+  padding: 3px 6px;
+  border-radius: 7px;
+  border: 1px solid var(--brand-accent);
+  background: var(--surface-1);
+  color: var(--text-primary);
+}
 
 /* ---- project deep dive (Scope / Timeline / Cost & Resource / Impact /
    Priority) -- opened by clicking a project card; all content is edited
@@ -2973,34 +3040,47 @@ main {
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-.deepdive-close {
+/* Close and Open in ClickUp as one small cluster pinned to the panel's top
+   corner -- both are "leave this dialog" actions, so they read as a pair
+   rather than Open in ClickUp sitting off on its own down by the photo
+   actions. */
+.deepdive-corner-actions {
   position: absolute;
   top: 14px;
   right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 3;
+}
+.deepdive-close,
+.deepdive-clickup-iconbtn {
   width: 30px;
   height: 30px;
   border-radius: 50%;
   border: 1px solid var(--gridline);
   background: var(--surface-2);
   color: var(--text-secondary);
-  font-size: 18px;
-  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  transition: background .15s, color .15s, transform .15s;
+  transition: background .15s, color .15s, transform .15s, border-color .15s;
 }
+.deepdive-close { font-size: 18px; line-height: 1; }
 .deepdive-close:hover { background: var(--status-critical); color: #fff; transform: rotate(90deg); }
+.deepdive-clickup-iconbtn:hover { color: #fff; background: var(--brand-accent); border-color: var(--brand-accent); }
 
-/* Three columns -- cover | title/meta/quick-facts | actions -- instead of
-   the previous cover + text column (with photo actions crammed under the
-   title, and "Open in ClickUp" pinned far right on its own). Info reads
-   top-to-bottom in the middle column now; every action (photo edits, the
-   ClickUp link) lives in its own right-hand column so it never competes
-   with the title for space. */
+/* Two columns -- cover (photo + its own icon toolbar right underneath) |
+   title/meta/quick-facts -- instead of a third actions column off to the
+   right: every photo action now lives with the photo itself, and Open in
+   ClickUp moved up into .deepdive-corner-actions next to Close, so nothing
+   needs to reserve space on the header's right edge anymore. */
 .deepdive-header {
   display: flex;
   align-items: flex-start;
   gap: 20px;
-  padding-right: 34px;
+  padding-right: 84px;
 }
 /* One square image -- most product photos on these projects are already
    square studio shots, so object-fit:contain on a neutral tile shows the
@@ -3101,57 +3181,46 @@ main {
   max-width: 520px;
 }
 .deepdive-fact-empty { font-size: 11.5px; color: var(--text-muted); font-style: italic; }
-.deepdive-header-actions {
+
+/* Photo + its own small icon toolbar, stacked as one column so every photo
+   action reads as "belonging to" the photo right above it, instead of
+   living in a text-button row off by the title (where it used to be). */
+.deepdive-cover-col {
   flex: none;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 10px;
+  align-items: center;
+  gap: 6px;
+  width: clamp(120px, 16vw, 190px);
 }
 .deepdive-cover-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
+  justify-content: center;
+  gap: 4px;
   flex-wrap: wrap;
-  max-width: 260px;
 }
-.deepdive-cover-upload-label,
-.deepdive-cover-recrop,
-.deepdive-cover-remove,
-.deepdive-cover-emoji-btn {
-  font-family: inherit;
-  font-size: 11.5px;
-  font-weight: 600;
-  padding: 5px 10px;
-  border-radius: 999px;
+.deepdive-cover-icon-btn {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  border-radius: 50%;
   border: 1px solid var(--gridline);
   background: var(--surface-2);
   color: var(--text-secondary);
   cursor: pointer;
+  padding: 0;
   transition: background .15s, color .15s, border-color .15s;
 }
-.deepdive-cover-upload-label:hover,
-.deepdive-cover-recrop:hover,
-.deepdive-cover-remove:hover,
-.deepdive-cover-emoji-btn:hover { color: #fff; background: var(--brand-accent); border-color: var(--brand-accent); }
-.deepdive-clickup-link {
-  flex: none;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-decoration: none;
-  border: 1px solid var(--gridline);
-  border-radius: var(--pill-radius);
-  padding: 6px 12px;
-  white-space: nowrap;
-  transition: color .15s, border-color .15s;
-}
-.deepdive-clickup-link:hover { color: var(--brand-accent-deep); border-color: var(--brand-accent); }
+.deepdive-cover-icon-btn:hover { color: #fff; background: var(--brand-accent); border-color: var(--brand-accent); }
 @media (max-width: 760px) {
   .deepdive-header { flex-wrap: wrap; }
-  .deepdive-header-actions { align-items: flex-start; }
-  .deepdive-cover-actions { justify-content: flex-start; max-width: none; }
+  .deepdive-cover-col { width: auto; }
 }
 
 /* ---- Cover photo lightbox ---- */
@@ -3217,6 +3286,30 @@ main {
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
 }
 .crop-panel h3 { margin: 0 0 6px; font-family: var(--font-heading); font-size: 17px; color: var(--text-primary); }
+/* Add Project reuses .crop-overlay/.crop-panel (same modal chrome, same
+   backdrop) but needs real room for a five-section form -- wider, and
+   scrollable instead of a fixed square crop viewport. */
+.add-project-panel { width: min(640px, 100%); max-height: 88vh; overflow-y: auto; }
+.add-project-panel .form-grid { margin-bottom: 4px; }
+.add-project-panel .form-field-wide { margin-top: 10px; }
+.form-field-checkbox { flex-direction: row; align-items: center; gap: 8px; }
+.form-field-checkbox input[type="checkbox"] { width: 16px; height: 16px; }
+/* Locally-backed-up projects (ClickUp not connected at submit time -- see
+   saveLocalBackupEntry) can't appear in the real Tooling/Lab tables, since
+   those are built straight off live portfolio data. Shown just above the
+   table instead, in the same dashed-amber local-backup treatment as
+   Risks/Issues/Lessons/Ideas. */
+.local-backup-projects { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.local-backup-projects li {
+  border: 1px dashed var(--status-warning);
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--status-warning) 6%, var(--surface-2));
+  font-size: 12.5px;
+}
+.local-backup-projects .idea-title { font-weight: 600; color: var(--text-primary); }
+.local-backup-projects .idea-meta { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+.local-backup-projects .idea-desc { font-size: 12px; color: var(--text-secondary); margin-top: 4px; white-space: pre-wrap; }
 .crop-hint { font-size: 12px; color: var(--text-muted); margin: 0 0 14px; line-height: 1.45; }
 .crop-viewport {
   width: 100%;

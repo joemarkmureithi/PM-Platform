@@ -889,7 +889,10 @@
     const removeBtn = document.getElementById("deepdive-cover-remove");
     const recropBtn = document.getElementById("deepdive-cover-recrop");
     const zoomHint = document.getElementById("deepdive-cover-zoom-hint");
-    const uploadLabelText = document.getElementById("deepdive-cover-upload-label-text");
+    // Icon-only now (see deepdive-cover-actions in index.html) -- the label
+    // itself carries the tooltip text that used to be spelled out next to
+    // the 📷, rather than the icon span's own text.
+    const uploadLabel = document.getElementById("deepdive-cover-upload-label");
     if (!img || !emojiEl || !removeBtn) return;
     if (data.coverPhoto) {
       img.src = data.coverPhoto;
@@ -898,7 +901,7 @@
       removeBtn.hidden = false;
       if (recropBtn) recropBtn.hidden = false;
       if (zoomHint) zoomHint.hidden = false;
-      if (uploadLabelText) uploadLabelText.textContent = "📷 Change photo";
+      if (uploadLabel) uploadLabel.title = "Change photo";
     } else {
       img.hidden = true;
       img.removeAttribute("src");
@@ -907,7 +910,7 @@
       removeBtn.hidden = true;
       if (recropBtn) recropBtn.hidden = true;
       if (zoomHint) zoomHint.hidden = true;
-      if (uploadLabelText) uploadLabelText.textContent = "📷 Add photo";
+      if (uploadLabel) uploadLabel.title = "Add photo";
     }
     // Only offer the emoji picker when there's no photo to choose between --
     // once a photo is set, it wins in deepDiveIconHtml regardless of any
@@ -1023,16 +1026,19 @@
     // handles both a number and a string correctly, where Date.parse(x)
     // would silently return NaN on a number (it coerces to a string first,
     // which isn't a parseable date format).
-    // No lower bound on purpose -- anything still open and overdue belongs
-    // in "this week" regardless of how long ago it was due, same as the
-    // window's previous rolling-forward version did. Only the upper bound
-    // (how far ahead counts as "this week") changed, from now+7 days to
-    // the actual end of the current calendar week.
-    const { endMs: nearTermCutoffMs } = currentWeekBoundsMs();
+    // Both bounds now apply -- "this week" means literally this Monday
+    // through Sunday, nothing outside it. An earlier version left the lower
+    // bound open ("anything overdue belongs in this week regardless of how
+    // long ago it was due"), which in practice meant a task due back at
+    // kickoff, months ago, that ClickUp still marked open would sit at the
+    // top of "near-term (this week)" forever. Old overdue work like that is
+    // still visible -- it's just in the comprehensive timeline below, not
+    // this "act on it this week" list.
+    const { startMs: nearTermStartMs, endMs: nearTermCutoffMs } = currentWeekBoundsMs();
     const nearTerm = allOpen
       .filter((t) => {
         const ms = t.dueDate ? new Date(t.dueDate).getTime() : t.startDate ? new Date(t.startDate).getTime() : NaN;
-        return Number.isFinite(ms) && ms < nearTermCutoffMs;
+        return Number.isFinite(ms) && ms >= nearTermStartMs && ms < nearTermCutoffMs;
       })
       .sort((a, b) => new Date(a.dueDate || a.startDate).getTime() - new Date(b.dueDate || b.startDate).getTime());
 
@@ -2294,12 +2300,20 @@
     return ms >= monday.getTime() && ms < nextMonday.getTime();
   }
 
+  // Tooling and Lab tasks used to arrive here tagged with one glued-together
+  // "Tooling/Lab" source, even though they're two quite different kinds of
+  // work (see the Tooling/Lab tabs themselves) -- a task now carries its own
+  // `category` ("tooling" | "lab", set when it's added -- see
+  // addProjectTask) so the two can be split apart into their own groups
+  // below. A task created before that field existed has no category; it's
+  // bucketed under Tooling, the more common case, since there's no way to
+  // recover which tab it actually came from.
   function collectLocalWeeklyItems() {
     const items = [];
     allProjects.forEach((p) => {
       getProjectTasks(p.id).forEach((t) => {
         if (!t.done && isIsoInCurrentWeek(t.dueDate)) {
-          items.push({ source: "Tooling/Lab", projectName: p.name, text: t.text, dueDate: t.dueDate });
+          items.push({ source: t.category === "lab" ? "Lab" : "Tooling", projectName: p.name, text: t.text, dueDate: t.dueDate });
         }
       });
       const checklistData = getCustomChecklistData(p.id);
@@ -2331,27 +2345,42 @@
     const urgency = item.dueDate ? dateUrgencyInfo(item.dueDate) : null;
     return `
       <li class="weekly-other-item">
-        <span class="weekly-other-source">${escapeHtml(item.source)}</span>
         ${item.projectName ? `<span class="weekly-other-project">${escapeHtml(item.projectName)}</span>` : ""}
         <span class="weekly-other-text">${escapeHtml(item.text)}</span>
         ${urgency ? `<span class="reason-chip ${urgency.cls}">${escapeHtml(urgency.label)}</span>` : ""}
       </li>`;
   }
 
+  // Fixed group order, source label -> matching the Tooling/Lab/Checklists/
+  // Idea Dumps tabs by name -- only groups that actually have an item this
+  // week render at all, so an all-clear week doesn't show four empty
+  // headings.
+  const WEEKLY_OTHER_GROUP_ORDER = ["Tooling", "Lab", "Checklist", "Idea Dump"];
+
   async function renderWeeklyOtherItems() {
     const panel = document.getElementById("weekly-other-panel");
-    const list = document.getElementById("weekly-other-list");
-    if (!panel || !list) return;
+    const groupsEl = document.getElementById("weekly-other-groups");
+    const countEl = document.getElementById("weekly-other-count");
+    if (!panel || !groupsEl) return;
     const local = collectLocalWeeklyItems();
     const ideaItems = await loadIdeaWeeklyItems();
     const all = [...local, ...ideaItems].sort((a, b) => Date.parse(a.dueDate) - Date.parse(b.dueDate));
     if (all.length === 0) {
       panel.hidden = true;
-      list.innerHTML = "";
+      groupsEl.innerHTML = "";
       return;
     }
     panel.hidden = false;
-    list.innerHTML = all.map(weeklyOtherItemHtml).join("");
+    if (countEl) countEl.textContent = String(all.length);
+    groupsEl.innerHTML = WEEKLY_OTHER_GROUP_ORDER.map((source) => {
+      const groupItems = all.filter((item) => item.source === source);
+      if (!groupItems.length) return "";
+      return `
+        <div class="weekly-other-group">
+          <div class="weekly-other-group-title">${escapeHtml(source)} <span class="tab-badge">${groupItems.length}</span></div>
+          <ul class="weekly-other-list">${groupItems.map(weeklyOtherItemHtml).join("")}</ul>
+        </div>`;
+    }).join("");
   }
 
   // Product Backlog -- open ClickUp tasks with NEITHER a start_date NOR a
@@ -2641,6 +2670,17 @@
     "data:image/png;base64,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";
 
   function renderStandupSummaryHtml(data) {
+    // A number-only "how big a week is this" strip up top -- the previous
+    // version made a reader open every project card to find out whether
+    // this was a quiet week or a loaded one. Purely derived from what's
+    // already in `data`, nothing new fetched.
+    const statsHtml = `
+      <div class="stat-strip">
+        <div class="stat"><span class="stat-value">${data.projects.length}</span><span class="stat-label">Active project${data.projects.length === 1 ? "" : "s"} this week</span></div>
+        <div class="stat"><span class="stat-value">${data.risks.length}</span><span class="stat-label">Open risk${data.risks.length === 1 ? "" : "s"}</span></div>
+        <div class="stat"><span class="stat-value">${data.gaps.length}</span><span class="stat-label">Planning gap${data.gaps.length === 1 ? "" : "s"}</span></div>
+      </div>`;
+
     const projectsHtml = data.projects.length
       ? data.projects
           .map((p) => {
@@ -2648,12 +2688,20 @@
               ? `<div class="team-info">${p.teamRows.map((r) => `<span class="team-chip">${escapeHtml(r.role || "—")}${r.effort ? ` · ${escapeHtml(r.effort)}` : ""}</span>`).join("")}</div>`
               : "";
             const priorityHtml = p.priorityText ? `<div class="priority-info">${escapeHtml(p.priorityText)}</div>` : "";
+            // Same square cover photo used as this project's thumbnail
+            // everywhere else in the dashboard (and in the PPTX export) --
+            // see resolveExportPhotos for why a photo can be null here even
+            // when the project has one set.
+            const coverHtml = p.coverPhoto ? `<img class="project-cover" src="${p.coverPhoto}" alt="" />` : "";
             return `
       <div class="project">
-        <h3>${escapeHtml(p.name)}${p.gate ? ` <span class="gate">${escapeHtml(p.gate)}</span>` : ""}</h3>
-        ${teamHtml}
-        ${priorityHtml}
-        ${p.lines.map(standupLineHtml).join("")}
+        ${coverHtml}
+        <div class="project-body">
+          <h3>${escapeHtml(p.name)}${p.gate ? ` <span class="gate">${escapeHtml(p.gate)}</span>` : ""}</h3>
+          ${teamHtml}
+          ${priorityHtml}
+          ${p.lines.map(standupLineHtml).join("")}
+        </div>
       </div>`;
           })
           .join("")
@@ -2736,6 +2784,24 @@
     color: var(--text-primary);
   }
   .meta { color: var(--text-muted); font-size: 13px; margin-bottom: 6px; font-weight: 600; }
+  .stat-strip { display: flex; gap: 10px; margin: 14px 0 6px; flex-wrap: wrap; }
+  .stat {
+    flex: 1 1 140px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 14px;
+    padding: 10px 14px;
+    box-shadow: 0 4px 16px rgba(21, 23, 28, 0.05);
+  }
+  .stat-value {
+    display: block;
+    font-family: 'Outfit', 'Plus Jakarta Sans', system-ui, sans-serif;
+    font-size: 24px;
+    font-weight: 800;
+    color: var(--brand-accent-deep);
+    line-height: 1.1;
+  }
+  .stat-label { font-size: 11.5px; color: var(--text-muted); font-weight: 600; }
   h2 {
     font-family: 'Outfit', 'Plus Jakarta Sans', system-ui, sans-serif;
     font-size: 15px;
@@ -2747,6 +2813,8 @@
     margin: 34px 0 14px;
   }
   .project {
+    display: flex;
+    gap: 14px;
     background: var(--card-bg);
     border: 1px solid var(--border-soft);
     border-radius: 16px;
@@ -2754,6 +2822,16 @@
     margin-bottom: 12px;
     box-shadow: 0 4px 16px rgba(21, 23, 28, 0.05);
   }
+  .project-cover {
+    flex: none;
+    width: 56px;
+    height: 56px;
+    border-radius: 12px;
+    object-fit: cover;
+    border: 1px solid var(--border-soft);
+    background: #fff;
+  }
+  .project-body { flex: 1; min-width: 0; }
   h3 { font-size: 14px; font-weight: 700; margin: 0 0 8px; color: var(--text-primary); }
   .gate {
     font-weight: 700;
@@ -2828,6 +2906,7 @@
   </div>
   <h1>Weekly Standup Summary</h1>
   <div class="meta">${escapeHtml(data.weekLabel)} · Generated ${escapeHtml(data.generatedAt)}</div>
+  ${statsHtml}
   <h2>This week's activity</h2>
   ${projectsHtml}
   <h2>Open risks</h2>
@@ -2848,6 +2927,52 @@
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  // Opens generated HTML straight in a new tab via a blob: URL instead of
+  // saving a file -- lets a PM check what the export actually looks like
+  // before deciding it's worth downloading, without leaving a throwaway
+  // file behind every time. Same mechanism as downloadTextFile just above,
+  // minus the <a download> step.
+  function previewHtmlInNewTab(html) {
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  // A project's cover photo always comes out of the crop tool as a fixed
+  // 1600x1600 canvas (see OUTPUT in wireCoverCropper) regardless of the
+  // source file's own resolution, so a genuinely blurry upload can't be
+  // told apart from a sharp one just by measuring the saved data URI's
+  // pixel dimensions -- that would always read 1600x1600 either way. This
+  // is the honest version of "skip it if it's low-res": it confirms the
+  // image actually decodes and isn't some degenerate sliver (a corrupt
+  // data URI, or a stray 1x1 placeholder), and leaves it out of the export
+  // rather than embedding a broken image if it doesn't clear that bar.
+  const MIN_EXPORT_PHOTO_PX = 80;
+  function coverPhotoOkForExport(dataUri) {
+    return new Promise((resolve) => {
+      if (!dataUri) { resolve(false); return; }
+      const img = new Image();
+      img.onload = () => resolve(img.naturalWidth >= MIN_EXPORT_PHOTO_PX && img.naturalHeight >= MIN_EXPORT_PHOTO_PX);
+      img.onerror = () => resolve(false);
+      img.src = dataUri;
+    });
+  }
+
+  // Confirms every project's cover photo (if any) actually decodes before
+  // handing `data` to either export -- see coverPhotoOkForExport. Mutates
+  // and returns the same `data` object for convenience at the call site.
+  async function resolveExportPhotos(data) {
+    await Promise.all(
+      data.projects.map(async (p) => {
+        if (p.coverPhoto && !(await coverPhotoOkForExport(p.coverPhoto))) {
+          p.coverPhoto = null;
+        }
+      })
+    );
+    return data;
   }
 
   async function downloadStandupSlides(btn) {
@@ -3814,10 +3939,17 @@
           </form>
         </li>`;
     }
+    // Local-only backups (see saveLocalBackupEntry) aren't real ClickUp
+    // tasks, so they skip the Edit flow (nothing to PUT to) and get a
+    // dismiss control plus the same "saved locally" badge the registers use.
+    const localBits = idea.localOnly
+      ? `<span class="local-backup-badge" title="The ClickUp intake list isn't configured yet -- kept safe in this browser instead">Saved locally only</span>
+         <button type="button" class="local-backup-dismiss" data-local-dismiss data-kind="idea" data-id="${escapeHtml(idea.id)}" title="Remove this local backup">&times;</button>`
+      : `<button type="button" class="idea-edit-btn" data-idea-edit="${escapeHtml(idea.id)}" title="Edit this submission">Edit</button>`;
     return `
-      <li>
+      <li${idea.localOnly ? ' class="local-backup-item"' : ""}>
         <a class="idea-title" href="${escapeHtml(idea.url || "#")}" target="_blank" rel="noopener">${escapeHtml(idea.name)}</a>
-        <button type="button" class="idea-edit-btn" data-idea-edit="${escapeHtml(idea.id)}" title="Edit this submission">Edit</button>
+        ${localBits}
         <div class="idea-meta">Submitted ${created}${idea.dueDate ? ` · Target ${fmtDate(idea.dueDate)}` : ""}</div>
         ${idea.description ? `<div class="idea-desc">${escapeHtml(idea.description)}</div>` : ""}
         ${opts.mockNote ? `<span class="idea-mock-note">${escapeHtml(opts.mockNote)}</span>` : ""}
@@ -3828,13 +3960,16 @@
     lastLoadedIdeas = ideas || [];
     const list = document.getElementById("ideas-list");
     const empty = document.getElementById("ideas-empty");
-    if (!ideas || ideas.length === 0) {
+    const all = [...getLocalBackupEntries("idea"), ...(ideas || [])].sort(
+      (a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0)
+    );
+    if (all.length === 0) {
       list.innerHTML = "";
       empty.hidden = false;
       return;
     }
     empty.hidden = true;
-    list.innerHTML = ideas.map((idea) => ideaCardHtml(idea)).join("");
+    list.innerHTML = all.map((idea) => ideaCardHtml(idea)).join("");
   }
 
   async function loadIdeas() {
@@ -3845,7 +3980,65 @@
       renderIdeas(data.ideas || []);
     } catch (err) {
       console.error(err);
+      renderIdeas([]);
     }
+  }
+
+  // ---- Redundant local save for Risks / Issues / Lessons / Ideas ----------
+  // Each of these four forms POSTs to a dedicated ClickUp list; when that
+  // list isn't configured yet (see registers.js/ideas.js's "mock" response)
+  // the server has nowhere durable to put what was submitted, and the same
+  // is true if the request fails outright (offline, server error). Either
+  // way, without this the entry would simply be gone on reload -- typed in,
+  // "submitted," then lost. This keeps one browser-local backup copy per
+  // kind ("risk" | "issue" | "lesson" | "idea") so nothing logged through
+  // these forms disappears just because ClickUp isn't wired up yet. It's a
+  // safety net, not a second source of truth: a submission that actually
+  // reaches ClickUp (source: "clickup") never touches this store, and once
+  // the real list is configured, new submissions stop accumulating here --
+  // existing local backups just sit alongside the real entries until
+  // someone re-enters them in ClickUp and dismisses the local copy.
+  function localBackupStorageKey(kind) {
+    return `pm-dashboard-local-backup:${kind}`;
+  }
+  function getLocalBackupEntries(kind) {
+    try {
+      const raw = localStorage.getItem(localBackupStorageKey(kind));
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  function saveLocalBackupEntry(kind, entry) {
+    try {
+      const entries = getLocalBackupEntries(kind);
+      entries.unshift({ ...entry, id: entry.id || `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, localOnly: true });
+      localStorage.setItem(localBackupStorageKey(kind), JSON.stringify(entries));
+    } catch {
+      // Storage unavailable (private browsing, quota) -- there's genuinely
+      // nowhere left to keep this safe in that case.
+    }
+  }
+  function removeLocalBackupEntry(kind, id) {
+    try {
+      localStorage.setItem(localBackupStorageKey(kind), JSON.stringify(getLocalBackupEntries(kind).filter((e) => e.id !== id)));
+    } catch {
+      /* no-op */
+    }
+  }
+  // One delegated dismiss handler covers every list that can show a local
+  // backup badge (the three registers' lists + Ideas) -- removes it from
+  // this browser's backup store and re-renders that one list.
+  function wireLocalBackupDismiss(containerId, kind, rerender) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-local-dismiss]");
+      if (!btn) return;
+      removeLocalBackupEntry(kind, btn.dataset.id);
+      rerender();
+    });
   }
 
   // ---- Risk / Issues / Lessons Learnt registers ---------------------------
@@ -3871,11 +4064,16 @@
     },
   };
 
-  function registerEntryHtml(entry) {
+  function registerEntryHtml(entry, type) {
     const created = entry.createdAt ? fmtDate(entry.createdAt) : "—";
+    const localBits = entry.localOnly
+      ? `<span class="local-backup-badge" title="ClickUp isn't connected for this register yet -- kept safe in this browser instead">Saved locally only</span>
+         <button type="button" class="local-backup-dismiss" data-local-dismiss data-kind="${escapeHtml(type)}" data-id="${escapeHtml(entry.id)}" title="Remove this local backup">&times;</button>`
+      : "";
     return `
-      <li>
+      <li class="${entry.localOnly ? "local-backup-item" : ""}">
         <a class="idea-title" href="${escapeHtml(entry.url || "#")}" target="_blank" rel="noopener">${escapeHtml(entry.name)}</a>
+        ${localBits}
         <div class="idea-meta">Logged ${created}${entry.dueDate ? ` · ${fmtDate(entry.dueDate)}` : ""}</div>
         ${entry.description ? `<div class="idea-desc">${escapeHtml(entry.description)}</div>` : ""}
       </li>`;
@@ -3886,13 +4084,19 @@
     const list = document.getElementById(ui.listId);
     const empty = document.getElementById(ui.emptyId);
     if (!list) return;
-    if (!entries || entries.length === 0) {
+    // Local backups (see saveLocalBackupEntry) always merge in, newest
+    // first alongside whatever the server returned -- a PM shouldn't have
+    // to remember a submission only "took" locally to go find it.
+    const all = [...getLocalBackupEntries(type), ...(entries || [])].sort(
+      (a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0)
+    );
+    if (all.length === 0) {
       list.innerHTML = "";
       if (empty) empty.hidden = false;
       return;
     }
     if (empty) empty.hidden = true;
-    list.innerHTML = entries.map(registerEntryHtml).join("");
+    list.innerHTML = all.map((entry) => registerEntryHtml(entry, type)).join("");
   }
 
   async function loadRegister(type) {
@@ -3903,6 +4107,9 @@
       renderRegisterList(type, data.entries || []);
     } catch (err) {
       console.error(err);
+      // Even the GET failed (offline, server down) -- still show whatever
+      // local backups exist rather than an empty list.
+      renderRegisterList(type, []);
     }
   }
 
@@ -3956,13 +4163,27 @@
           status.textContent = "Saved to ClickUp ✓";
           status.className = "form-status success";
         } else {
-          status.textContent = data.note || "Previewed only — this register's ClickUp list isn't configured yet.";
+          // Not connected -- the server could only preview this, so back it
+          // up locally rather than let it vanish once the form resets.
+          if (data.entry) saveLocalBackupEntry(type, data.entry);
+          status.textContent = `${data.note || "Previewed only — this register's ClickUp list isn't configured yet."} Kept a local backup so it isn't lost.`;
           status.className = "form-status info";
         }
         form.reset();
         await loadRegister(type);
       } catch (err) {
-        status.textContent = `Couldn't submit: ${err.message}`;
+        // The request itself failed (offline, server error) -- still back
+        // up what was typed in from `payload` directly, since there's no
+        // server response to pull an entry from this time.
+        saveLocalBackupEntry(type, {
+          name: payload.title || "(untitled)",
+          description: payload.description || "",
+          dueDate: payload.targetDate || null,
+          createdAt: new Date().toISOString(),
+          url: "#",
+        });
+        await loadRegister(type);
+        status.textContent = `Couldn't submit: ${err.message}. Kept a local backup so it isn't lost.`;
         status.className = "form-status error";
       } finally {
         btn.disabled = false;
@@ -4823,9 +5044,18 @@
     }
   }
 
-  function addProjectTask(projectId, text, dueDate) {
+  // `category` ("tooling" | "lab") records which tab a task was added from,
+  // since a single project can appear in both the Tooling and Lab tables at
+  // once and its task list is one shared store per project (see above) --
+  // without a tag on the task itself there'd be no way to tell "Other open
+  // items this week" apart into separate Tooling and Lab groups. Tasks
+  // created before this field existed have no category; callers treat a
+  // missing category as "tooling" (see collectLocalWeeklyItems) since that
+  // was the more common case in practice -- there's no way to recover which
+  // tab they actually came from after the fact.
+  function addProjectTask(projectId, text, dueDate, category) {
     const tasks = getProjectTasks(projectId);
-    tasks.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text, done: false, dueDate: dueDate || "" });
+    tasks.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text, done: false, dueDate: dueDate || "", category: category || "tooling" });
     setProjectTasks(projectId, tasks);
   }
 
@@ -4851,6 +5081,20 @@
     }
   }
 
+  // A task's date is never optional after creation either -- the add form
+  // requires one up front (see wireProjectTasksPanel's submit handler), and
+  // editing it the same way (see beginInlineDateEdit) refuses to save an
+  // empty value rather than clearing the date back out.
+  function editProjectTaskDate(projectId, taskId, dueDate) {
+    if (!dueDate) return;
+    const tasks = getProjectTasks(projectId);
+    const task = tasks.find((t) => t.id === taskId);
+    if (task) {
+      task.dueDate = dueDate;
+      setProjectTasks(projectId, tasks);
+    }
+  }
+
   function projectTasksSummary(projectId) {
     const tasks = getProjectTasks(projectId);
     return { total: tasks.length, open: tasks.filter((t) => !t.done).length };
@@ -4863,14 +5107,14 @@
   }
 
   function projectTaskItemHtml(projectId, task) {
-    const urgency = task.dueDate ? dateUrgencyInfo(task.dueDate) : null;
+    const urgency = dateUrgencyInfo(task.dueDate);
     return `
       <li class="checklist-item${task.done ? " checklist-item-done" : ""}">
         <label>
           <input type="checkbox" data-task-toggle data-project="${escapeHtml(projectId)}" data-task-id="${escapeHtml(task.id)}"${task.done ? " checked" : ""} />
           <span class="checklist-item-text" data-project="${escapeHtml(projectId)}" data-task-id="${escapeHtml(task.id)}" data-editable-text title="Click to edit">${escapeHtml(task.text)}</span>
         </label>
-        ${urgency ? `<span class="reason-chip ${urgency.cls}">${escapeHtml(urgency.label)}</span>` : ""}
+        <button type="button" class="reason-chip task-date-chip ${urgency.cls}" data-task-date-edit data-project="${escapeHtml(projectId)}" data-task-id="${escapeHtml(task.id)}" data-date="${escapeHtml(task.dueDate || "")}" title="Click to change the date">${escapeHtml(urgency.label)}</button>
         <button type="button" class="checklist-remove-btn" data-task-remove data-project="${escapeHtml(projectId)}" data-task-id="${escapeHtml(task.id)}" title="Remove task" aria-label="Remove task">&times;</button>
       </li>`;
   }
@@ -4912,6 +5156,40 @@
     });
   }
 
+  // Same click-to-edit interaction as beginInlineTextEdit, but for a task's
+  // date chip: the input is a native date picker instead of a text field,
+  // and -- since a Tooling/Lab task must always have a date -- clearing it
+  // and leaving it blank cancels the edit and reverts to the previous chip,
+  // rather than saving an empty date the way an emptied text field would
+  // just be rejected further up.
+  function beginInlineDateEdit(chipEl, currentValue, onSave) {
+    if (!chipEl || chipEl.dataset.editing) return;
+    chipEl.dataset.editing = "true";
+    const input = document.createElement("input");
+    input.type = "date";
+    input.className = "inline-edit-date-input";
+    if (currentValue) input.value = currentValue;
+    chipEl.replaceWith(input);
+    input.focus();
+    let done = false;
+    function commit(save) {
+      if (done) return;
+      done = true;
+      if (save && input.value) {
+        onSave(input.value);
+      } else {
+        chipEl.dataset.editing = "";
+        input.replaceWith(chipEl);
+      }
+    }
+    input.addEventListener("blur", () => commit(true));
+    input.addEventListener("change", () => commit(true));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); commit(true); }
+      else if (e.key === "Escape") { e.preventDefault(); commit(false); }
+    });
+  }
+
   function projectTasksRowHtml(projectId, colspan) {
     const tasks = getProjectTasks(projectId);
     const itemsHtml = tasks.length
@@ -4924,8 +5202,9 @@
             <ul class="checklist-items">${itemsHtml}</ul>
             <form class="project-task-add-form" data-project="${escapeHtml(projectId)}">
               <input type="text" class="checklist-add-input project-task-add-input" placeholder="Add a task…" maxlength="200" />
-              <input type="date" class="project-task-add-date" aria-label="Optional due date" />
+              <input type="date" class="project-task-add-date" aria-label="Due date" required title="A due date is required" />
               <button type="submit" class="project-task-add-btn">Add</button>
+              <span class="project-task-add-status" aria-live="polite"></span>
             </form>
           </div>
         </td>
@@ -4958,8 +5237,10 @@
 
   // Shared click/change/submit wiring for the Tooling and Lab tables' task
   // panels -- identical behavior in both, so one listener setup covers both
-  // tbody elements rather than duplicating it.
-  function wireProjectTasksPanel(tbody) {
+  // tbody elements rather than duplicating it. `category` ("tooling" |
+  // "lab") tags every task added through this panel so "Other open items
+  // this week" can later split them back apart -- see addProjectTask.
+  function wireProjectTasksPanel(tbody, category) {
     if (!tbody) return;
     tbody.addEventListener("click", (e) => {
       const toggleBtn = e.target.closest(".tasks-toggle-btn[data-tasks-toggle]");
@@ -4975,6 +5256,15 @@
       if (removeBtn) {
         removeProjectTask(removeBtn.dataset.project, removeBtn.dataset.taskId);
         refreshProjectTasksUI(tbody, removeBtn.dataset.project);
+        return;
+      }
+      const dateChip = e.target.closest("[data-task-date-edit]");
+      if (dateChip) {
+        const { project, taskId, date } = dateChip.dataset;
+        beginInlineDateEdit(dateChip, date, (newDate) => {
+          editProjectTaskDate(project, taskId, newDate);
+          refreshProjectTasksUI(tbody, project);
+        });
         return;
       }
       const editSpan = e.target.closest("[data-editable-text][data-task-id]");
@@ -5004,9 +5294,20 @@
       e.preventDefault();
       const input = form.querySelector(".project-task-add-input");
       const dateInput = form.querySelector(".project-task-add-date");
+      const statusEl = form.querySelector(".project-task-add-status");
       const text = (input?.value || "").trim();
       if (!text) return;
-      addProjectTask(form.dataset.project, text, dateInput?.value || "");
+      // A task is never saved without a date -- the input already carries
+      // `required`, but that only blocks a native form submit when the
+      // button itself triggers validation; belt-and-braces here too so a
+      // programmatic submit can't slip an undated task through either.
+      if (!dateInput || !dateInput.value) {
+        if (dateInput) dateInput.reportValidity();
+        if (statusEl) statusEl.textContent = "Add a due date to save this task.";
+        return;
+      }
+      if (statusEl) statusEl.textContent = "";
+      addProjectTask(form.dataset.project, text, dateInput.value, category);
       const row = form.closest("tr.project-tasks-row");
       if (row) row.hidden = false;
       refreshProjectTasksUI(tbody, form.dataset.project);
@@ -5459,9 +5760,33 @@
 
   document.getElementById("weekly-refresh-btn").addEventListener("click", () => loadWeekly());
 
-  document.getElementById("weekly-summary-btn").addEventListener("click", () => {
-    const html = renderStandupSummaryHtml(buildStandupSummaryData());
-    downloadTextFile(`standup-summary-${currentWeekMondayIso()}.html`, html, "text/html");
+  document.getElementById("weekly-summary-preview-btn").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Opening…";
+    try {
+      const data = await resolveExportPhotos(buildStandupSummaryData());
+      previewHtmlInNewTab(renderStandupSummaryHtml(data));
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  });
+
+  document.getElementById("weekly-summary-btn").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Building…";
+    try {
+      const data = await resolveExportPhotos(buildStandupSummaryData());
+      const html = renderStandupSummaryHtml(data);
+      downloadTextFile(`standup-summary-${currentWeekMondayIso()}.html`, html, "text/html");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
   });
 
   document.getElementById("weekly-slides-btn").addEventListener("click", (e) => downloadStandupSlides(e.currentTarget));
@@ -5583,13 +5908,24 @@
         status.textContent = "Saved to ClickUp ✓";
         status.className = "form-status success";
       } else {
-        status.textContent = data.note || "Previewed only — ClickUp intake list isn't configured yet.";
+        if (data.idea) saveLocalBackupEntry("idea", data.idea);
+        status.textContent = `${data.note || "Previewed only — ClickUp intake list isn't configured yet."} Kept a local backup so it isn't lost.`;
         status.className = "form-status info";
       }
       form.reset();
       await loadIdeas();
     } catch (err) {
-      status.textContent = `Couldn't submit: ${err.message}`;
+      saveLocalBackupEntry("idea", {
+        name: payload.title || "(untitled idea)",
+        description: payload.description || "",
+        product: payload.product || "",
+        productCategory: payload.productCategory || "",
+        dueDate: payload.targetDate || null,
+        createdAt: new Date().toISOString(),
+        url: "#",
+      });
+      await loadIdeas();
+      status.textContent = `Couldn't submit: ${err.message}. Kept a local backup so it isn't lost.`;
       status.className = "form-status error";
     } finally {
       btn.disabled = false;
@@ -5657,7 +5993,11 @@
     });
   }
 
-  Object.keys(REGISTER_UI).forEach((type) => wireRegisterForm(type));
+  Object.keys(REGISTER_UI).forEach((type) => {
+    wireRegisterForm(type);
+    wireLocalBackupDismiss(REGISTER_UI[type].listId, type, () => loadRegister(type));
+  });
+  wireLocalBackupDismiss("ideas-list", "idea", () => renderIdeas(lastLoadedIdeas));
 
   // Setting a project's tooling priority -- re-sorts the table in place
   // (rather than a full renderAll) so picking a priority doesn't reset
@@ -5722,8 +6062,8 @@
 
   // Per-project task panels (Tasks toggle + add/check/remove list) -- same
   // wiring on both the Tooling and Lab tables.
-  wireProjectTasksPanel(toolingTbody);
-  wireProjectTasksPanel(document.getElementById("lab-tbody"));
+  wireProjectTasksPanel(toolingTbody, "tooling");
+  wireProjectTasksPanel(document.getElementById("lab-tbody"), "lab");
 
   // Event delegation for every checklist checkbox (Checklists tab) -- one
   // listener on the grid container rather than one per checkbox, since the
@@ -5828,6 +6168,153 @@
       }
     }
   });
+
+  // ---- Add Project (Tooling & Lab tabs) ------------------------------------
+  // Tooling and Lab only ever showed projects ClickUp already had -- there
+  // was no way to get a brand new one in front of either tab without going
+  // to create it in ClickUp first. This opens one shared modal (see
+  // #add-project-overlay in index.html) from either tab's "+ Add project"
+  // button and POSTs to /api/project-create, which creates a real task on
+  // the Active list (so the new project shows up everywhere else in the
+  // dashboard too, not just here) and best-effort sets its Product
+  // Category/Stage Gate/Tooling custom fields. When ClickUp isn't
+  // configured (or the request fails outright), it falls back to the same
+  // local-backup safety net as Risks/Issues/Lessons/Ideas above.
+  function populateAddProjectGateOptions() {
+    const select = document.getElementById("add-project-gate");
+    if (!select || select.options.length > 1) return;
+    GATE_ORDER.forEach((gate) => {
+      const opt = document.createElement("option");
+      opt.value = gate;
+      opt.textContent = gate;
+      select.appendChild(opt);
+    });
+  }
+
+  function renderLocalBackupProjects() {
+    const entries = getLocalBackupEntries("project");
+    ["tooling-local-projects", "lab-local-projects"].forEach((id) => {
+      const list = document.getElementById(id);
+      if (!list) return;
+      if (!entries.length) {
+        list.hidden = true;
+        list.innerHTML = "";
+        return;
+      }
+      list.hidden = false;
+      list.innerHTML = entries
+        .map(
+          (p) => `
+        <li>
+          <span class="idea-title">${escapeHtml(p.name)}</span>
+          <span class="local-backup-badge" title="ClickUp isn't connected yet -- kept safe in this browser instead">Saved locally only</span>
+          <button type="button" class="local-backup-dismiss" data-local-dismiss data-kind="project" data-id="${escapeHtml(p.id)}" title="Remove this local backup">&times;</button>
+          <div class="idea-meta">Not yet in ClickUp -- re-enter it there when the Active list is connected, then remove this local copy.</div>
+        </li>`
+        )
+        .join("");
+    });
+  }
+  wireLocalBackupDismiss("tooling-local-projects", "project", renderLocalBackupProjects);
+  wireLocalBackupDismiss("lab-local-projects", "project", renderLocalBackupProjects);
+
+  function openAddProjectModal(fromTab) {
+    populateAddProjectGateOptions();
+    const overlay = document.getElementById("add-project-overlay");
+    const hint = document.getElementById("add-project-hint");
+    const toolingCb = document.getElementById("add-project-tooling");
+    if (!overlay) return;
+    // A steer, not a lock -- opened from Lab, "Needs tooling" starts
+    // unchecked (and vice versa from Tooling, checked), but either can be
+    // changed before submitting since plenty of projects need both.
+    if (toolingCb) toolingCb.checked = fromTab === "tooling";
+    if (hint) {
+      hint.textContent =
+        fromTab === "lab"
+          ? "Creates a real project on the Active portfolio list, not just a local note -- it'll show up everywhere else in the dashboard too, not only in Lab."
+          : "Creates a real project on the Active portfolio list, not just a local note -- it'll show up everywhere else in the dashboard too, not only in Tooling.";
+    }
+    overlay.hidden = false;
+  }
+  function closeAddProjectModal() {
+    const overlay = document.getElementById("add-project-overlay");
+    const form = document.getElementById("add-project-form");
+    const status = document.getElementById("add-project-status");
+    if (overlay) overlay.hidden = true;
+    if (form) form.reset();
+    if (status) { status.textContent = ""; status.className = "form-status"; }
+  }
+  document.querySelectorAll("[data-add-project]").forEach((btn) => {
+    btn.addEventListener("click", () => openAddProjectModal(btn.dataset.addProject));
+  });
+  const addProjectCancelBtn = document.getElementById("add-project-cancel");
+  if (addProjectCancelBtn) addProjectCancelBtn.addEventListener("click", closeAddProjectModal);
+  document.addEventListener("keydown", (e) => {
+    const overlay = document.getElementById("add-project-overlay");
+    if (e.key === "Escape" && overlay && !overlay.hidden) closeAddProjectModal();
+  });
+
+  const addProjectForm = document.getElementById("add-project-form");
+  if (addProjectForm) {
+    addProjectForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById("add-project-submit-btn");
+      const status = document.getElementById("add-project-status");
+      const payload = {
+        name: document.getElementById("add-project-name").value.trim(),
+        productCategory: document.getElementById("add-project-category").value.trim(),
+        owners: document.getElementById("add-project-owners").value.trim(),
+        currentGate: document.getElementById("add-project-gate").value,
+        targetGateDate: document.getElementById("add-project-target-date").value || "",
+        tooling: document.getElementById("add-project-tooling").checked,
+        scope: document.getElementById("add-project-scope").value.trim(),
+        timeline: document.getElementById("add-project-timeline").value.trim(),
+        costResource: document.getElementById("add-project-cost-resource").value.trim(),
+        impact: document.getElementById("add-project-impact").value.trim(),
+        priority: document.getElementById("add-project-priority").value.trim(),
+      };
+      if (!payload.name) return;
+
+      btn.disabled = true;
+      status.textContent = "Adding…";
+      status.className = "form-status";
+
+      try {
+        const res = await fetch("/api/project-create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || "Couldn't add project");
+
+        if (data.source === "clickup") {
+          status.textContent = "Added to ClickUp ✓ — Refresh to see it across the dashboard.";
+          status.className = "form-status success";
+          closeAddProjectModal();
+          load();
+        } else {
+          saveLocalBackupEntry("project", data.project);
+          renderLocalBackupProjects();
+          status.textContent = `${data.note || "Previewed only — the Active list isn't configured yet."} Kept a local backup so it isn't lost.`;
+          status.className = "form-status info";
+        }
+      } catch (err) {
+        saveLocalBackupEntry("project", {
+          name: payload.name,
+          description: `Product Category: ${payload.productCategory || "(not specified)"}\nOwner(s): ${payload.owners || "(not specified)"}\nStage Gate: ${payload.currentGate || "(not specified)"}`,
+          createdAt: new Date().toISOString(),
+          url: "#",
+        });
+        renderLocalBackupProjects();
+        status.textContent = `Couldn't add project: ${err.message}. Kept a local backup so it isn't lost.`;
+        status.className = "form-status error";
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+  renderLocalBackupProjects();
 
   load();
   loadIdeas();

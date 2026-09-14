@@ -1699,6 +1699,114 @@ same treatment in their own idiom: hovering a row brings its bar to full
 opacity, brightens it, and grows it slightly taller, without disturbing
 the deliberate opacity gradient used to rank the other rows at rest.
 
+## 27. Splitting Tooling from Lab, a real "this week" fix, redesigned Deep Dive photo controls, a local safety net for four forms, adding a project from Tooling/Lab, mandatory task dates, and more informative exports
+
+A broad batch of feedback, all from the same root idea: a few places were
+quietly conflating two different things, or losing something the PM typed
+in, and this batch untangles each of them.
+
+"Other open items this week" (Weekly Activity) used to lump Tooling and Lab
+tasks under one glued-together "Tooling/Lab" badge per item, even though
+they're two different kinds of work covered by two different tabs. A task
+now carries its own `category` ("tooling" | "lab", set from whichever
+tab's Tasks panel it was added through -- see `addProjectTask`), and the
+panel groups by it: a Tooling heading with its own count, a Lab heading
+with its own, each only rendered when it actually has something this week.
+The whole panel is now a `<details>`, collapsed by default and wired
+exactly like Product Backlog right below it (same summary/arrow-marker
+CSS, same "never touch `.open` from JS" approach so a PM who expands it
+mid-session doesn't get it snapped shut back on refresh).
+
+The Deep Dive's "Near-term (this week)" list had a real bug, not just a
+labeling one: it filtered out anything past the end of this week, but
+never filtered out anything before the *start* of it, so a task still
+sitting open in ClickUp from the kickoff stage months ago -- however old --
+stayed pinned at the top of "this week" forever. It now needs a due or
+start date inside the literal current Monday-through-Sunday window, both
+ends. Separately, a second bug meant some of those old items weren't even
+supposed to read as "open" in the first place: `flattenOpenTasks` (which
+both the near-term list and the comprehensive timeline read from) only
+excluded ClickUp's `done` status type, not `closed` -- and a custom status
+named something like "Complete" can carry type `closed` rather than
+literally `done` (the portfolio's own health-bucketing logic already knew
+this; the task flattener didn't). Both are fixed now, so a finished task
+reads as finished everywhere, not just in some views.
+
+The Deep Dive's photo controls are reorganized around where a PM's eye
+actually goes. Open in ClickUp used to sit off on its own, down by the
+photo buttons; it now lives right next to Close, both as small round icon
+buttons in the panel's top corner -- one cluster of "leave this dialog"
+actions instead of two separate ones. Change/Recrop/Remove photo and
+Choose emoji moved the other direction, off the header's right edge and
+down into a small icon toolbar directly under the photo itself, each an
+icon-only circular button with a tooltip (📷 / ✂️ / 🗑️ / 🙂) instead of a
+row of text pills competing with the title for space.
+
+Risks, Issues, Lessons Learnt, and Idea Dump submissions previously had
+nowhere to go if their ClickUp list wasn't configured yet (or the request
+failed outright) beyond a one-time "previewed only" toast -- reload the
+page and it was just gone. Each of those four forms now backs up what was
+typed into a local, browser-only store (`saveLocalBackupEntry`) the moment
+ClickUp can't take it, and every list that shows submissions merges those
+local backups back in with a dashed amber "Saved locally only" badge and a
+dismiss button, right alongside whatever ClickUp actually has. It's a
+safety net, not a second source of truth -- a submission that reaches
+ClickUp never touches this store, and dismissing a local backup after
+re-entering it for real in ClickUp is a manual, deliberate action.
+
+Tooling and Lab previously could only ever show projects ClickUp already
+had -- there was no way to get a brand new one in front of either tab
+without first going and creating it in ClickUp by hand. Both tabs now have
+a "+ Add project" button opening one shared modal (which fields it needs
+mirrors a Deep Dive's five tabs -- Scope, Timeline, Cost & Resource,
+Impact, Priority -- condensed onto one form) that creates a real task on
+the same Active list every other tab reads, via a new `/api/project-create`
+endpoint. Everything typed in is guaranteed to survive in the task's
+description (same pattern as the Risk/Issue/Lesson registers), and Product
+Category / Stage Gate / Tooling are *also* best-effort written as real
+ClickUp custom fields when the live list has matching fields, so the new
+project is correctly filtered into Tooling/Lab/By Category right away
+rather than needing a manual follow-up edit in ClickUp -- if a field can't
+be found or a write fails, the task itself still gets created successfully
+on the description alone. When ClickUp isn't configured, it falls back to
+the same local-backup safety net described above, shown just above both
+tables since a locally-backed-up project can't appear in the real,
+ClickUp-sourced table itself.
+
+A Tooling/Lab task can no longer be saved without a due date -- the add
+form's date field is `required` (both natively and double-checked in the
+submit handler, so a script can't slip one through either), and a task's
+date is now a clickable chip in its own right: click it to swap in a date
+picker inline, the same interaction the task's text already had. Clearing
+it back to empty cancels the edit rather than saving a blank date, so
+"every task has a date" stays true after editing, not just at creation.
+
+Last, the weekly HTML/PPTX exports got a pass for being more informative
+and less of a black box. The HTML export now leads with a three-number
+"how big a week is this" strip (active projects / open risks / planning
+gaps) and shows each project's own cover photo next to its card -- the
+data was already being collected for the PPTX version and just never made
+it into the HTML one. A photo only makes it into either export after
+confirming it actually decodes (`coverPhotoOkForExport`) rather than
+risking a broken image; true blur-detection isn't possible here since the
+crop tool already normalizes every photo to a fixed 1600×1600 canvas
+regardless of the source file's resolution, so "low-res" is structurally
+handled upstream of export, not filtered per-download. The PPTX's Open
+risks and Decisions & gaps slides had a real overflow bug: PowerPoint text
+boxes don't auto-shrink or scroll the way the HTML export's `<ul>` does,
+so a long list just ran off the bottom of a fixed-height slide and
+silently disappeared -- exactly the "pptx truncates it, html doesn't"
+report. Both bullet slides now paginate across as many slides as needed
+(continuing the same title, e.g. "Open risks (2/3)") instead of capping at
+one. The title slide also picked up the same three-number stat strip the
+HTML export leads with, for the same at-a-glance read in a screen-share.
+Finally, a new "Preview (HTML)" button sits next to "Download summary
+(HTML)" and opens the exact same generated page in a new tab via a
+`blob:` URL -- nothing written to disk -- so a PM can check it looks right
+before deciding it's worth actually downloading. A true no-download
+preview for the PPTX isn't practical (it's a binary format with no
+in-browser renderer to hand it to), so that one stays download-only.
+
 ## What's next: product lifecycle & project management
 
 The direction for this platform is a full **product lifecycle and project

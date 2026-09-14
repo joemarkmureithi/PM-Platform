@@ -135,6 +135,7 @@
           <div class="toolbar-controls">
             <span class="calendar-month-label" id="weekly-week-label"></span>
             <span class="weekly-total" id="weekly-total"></span>
+            <button type="button" id="weekly-summary-preview-btn" class="action-btn" title="Open this week's summary in a new tab first, without saving anything to disk">Preview (HTML)</button>
             <button type="button" id="weekly-summary-btn" class="action-btn" title="Download this week's activity, open risks, and decisions/gaps as one styled HTML page">Download summary (HTML)</button>
             <button type="button" id="weekly-slides-btn" class="action-btn" title="Build the same standup picture as a PowerPoint deck, ready to screen-share">Download slides (.pptx)</button>
             <button type="button" id="weekly-refresh-btn" class="action-btn">Refresh</button>
@@ -143,16 +144,24 @@
         <div class="weekly-status-filters" id="weekly-status-filters"></div>
       </section>
       <!-- Open items dated this week that live outside ClickUp entirely --
-           local Tooling/Lab tasks, Checklist items with a due date, and
-           Idea Dump submissions with a target date. Kept as its own panel
-           rather than folded into the per-project cards above, since Idea
-           Dump items aren't tied to any one project. -->
+           local Tooling tasks, Lab tasks, Checklist items with a due date,
+           and Idea Dump submissions with a target date. Kept as its own
+           panel rather than folded into the per-project cards above, since
+           Idea Dump items aren't tied to any one project. Tooling and Lab
+           are quite different kinds of work, so each gets its own group
+           heading rather than one glued-together "Tooling/Lab" label (see
+           collectLocalWeeklyItems). Collapsed by default, same as Product
+           Backlog below -- reuses that same details/summary pattern. -->
       <section class="panel weekly-other-panel" id="weekly-other-panel" hidden>
-        <div class="panel-header">
-          <h2>Other open items this week</h2>
-          <p>Dated items from Tooling, Lab, Checklists, and Idea Dumps that fall in this Monday&ndash;Sunday window -- not pulled from ClickUp.</p>
-        </div>
-        <ul class="weekly-other-list" id="weekly-other-list"></ul>
+        <details id="weekly-other-details">
+          <summary class="panel-header weekly-backlog-summary">
+            <div>
+              <h2>Other open items this week <span class="tab-badge" id="weekly-other-count">0</span></h2>
+              <p>Dated items from Tooling, Lab, Checklists, and Idea Dumps that fall in this Monday&ndash;Sunday window -- not pulled from ClickUp.</p>
+            </div>
+          </summary>
+          <div id="weekly-other-groups"></div>
+        </details>
       </section>
       <!-- Product Backlog -- ClickUp tasks with no start_date AND no
            due_date at all, grouped per project. Distinct from "Other open
@@ -675,10 +684,16 @@
 
     <section id="tab-panel-tooling" class="tab-panel" hidden>
       <section class="panel">
-        <div class="panel-header">
-          <h2>Projects Needing Tooling</h2>
-          <p>Every non-completed project whose ClickUp Tooling field is set — scanned straight off the same portfolio data every other tab reads, not a separate list. Set a priority per project to sequence tooling spend across the portfolio, or drag rows by the handle to set your own order — both are saved in this browser only, since there's no ClickUp field for either. Open "Tasks" on a row to track the individual tooling tasks for that project (e.g. multiple vendor/fixture tasks on one project), each with an optional due date. Follows the VIEWING selector above.</p>
+        <div class="panel-header panel-header-row">
+          <div>
+            <h2>Projects Needing Tooling</h2>
+            <p>Every non-completed project whose ClickUp Tooling field is set — scanned straight off the same portfolio data every other tab reads, not a separate list. Set a priority per project to sequence tooling spend across the portfolio, or drag rows by the handle to set your own order — both are saved in this browser only, since there's no ClickUp field for either. Open "Tasks" on a row to track the individual tooling tasks for that project (e.g. multiple vendor/fixture tasks on one project), each with an optional due date. Follows the VIEWING selector above.</p>
+          </div>
+          <div class="toolbar-controls">
+            <button type="button" class="action-btn action-btn-primary" data-add-project="tooling">+ Add project</button>
+          </div>
         </div>
+        <ul class="local-backup-projects" id="tooling-local-projects" hidden></ul>
         <div class="table-wrap">
           <table id="tooling-table" class="resizable-table">
             <colgroup>
@@ -712,10 +727,16 @@
 
     <section id="tab-panel-lab" class="tab-panel" hidden>
       <section class="panel">
-        <div class="panel-header">
-          <h2>Projects Needing Lab Work</h2>
-          <p>Every non-completed project currently at Scoping &amp; Feasibility, Preliminary Design, or Detailed Design — the three gates that involve bench/lab testing before a project can move on. There's no dedicated "lab" field in ClickUp, so this is inferred from stage gate. "Closes by" is each project's own next-gate target date, and the countdown recalculates every time this loads, so it counts down week on week rather than needing to be updated by hand. Open "Tasks" on a row to track individual lab tasks for that project, each with an optional due date. Follows the VIEWING selector above.</p>
+        <div class="panel-header panel-header-row">
+          <div>
+            <h2>Projects Needing Lab Work</h2>
+            <p>Every non-completed project currently at Scoping &amp; Feasibility, Preliminary Design, or Detailed Design — the three gates that involve bench/lab testing before a project can move on. There's no dedicated "lab" field in ClickUp, so this is inferred from stage gate. "Closes by" is each project's own next-gate target date, and the countdown recalculates every time this loads, so it counts down week on week rather than needing to be updated by hand. Open "Tasks" on a row to track individual lab tasks for that project, each with an optional due date. Follows the VIEWING selector above.</p>
+          </div>
+          <div class="toolbar-controls">
+            <button type="button" class="action-btn action-btn-primary" data-add-project="lab">+ Add project</button>
+          </div>
         </div>
+        <ul class="local-backup-projects" id="lab-local-projects" hidden></ul>
         <div class="table-wrap">
           <table id="lab-table" class="resizable-table">
             <colgroup>
@@ -764,35 +785,45 @@
        to ClickUp. Rendered once, filled in by JS on open. -->
   <div class="deepdive-overlay" id="deepdive-overlay" hidden>
     <div class="deepdive-panel" id="deepdive-panel" role="dialog" aria-modal="true" aria-labelledby="deepdive-title">
-      <button type="button" class="deepdive-close" id="deepdive-close" aria-label="Close">&times;</button>
+      <!-- Open in ClickUp lives right beside Close now, both in the same
+           top corner, instead of Open in ClickUp sitting off on its own
+           below the photo actions -- one small cluster of "leave this
+           dialog" controls instead of two separate ones. -->
+      <div class="deepdive-corner-actions">
+        <a class="deepdive-clickup-iconbtn" id="deepdive-clickup-link" href="#" target="_blank" rel="noopener" title="Open in ClickUp" aria-label="Open in ClickUp">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg>
+        </a>
+        <button type="button" class="deepdive-close" id="deepdive-close" aria-label="Close">&times;</button>
+      </div>
       <div class="deepdive-header">
         <!-- One square image, sized for the square product photos these
              projects actually have -- doubles as this project's cover AND
              its thumbnail everywhere else in the dashboard (project cards,
              kanban, etc. -- see deepDiveIconHtml), so there's only one photo
              to keep updated instead of two. Falls back to a big emoji when
-             no photo has been set. Clicking it (when a photo is set) opens
-             a full-size lightbox; the actions that edit it live in their
-             own column to the right instead of crowding the title text. -->
-        <button type="button" class="deepdive-cover" id="deepdive-cover" aria-label="View photo full-size">
-          <img id="deepdive-cover-img" alt="" hidden />
-          <span id="deepdive-cover-emoji" class="deepdive-cover-emoji"></span>
-          <span class="deepdive-cover-zoom-hint" id="deepdive-cover-zoom-hint" hidden>🔍</span>
-        </button>
+             no photo has been set. Clicking the photo itself (when one is
+             set) opens a full-size lightbox; the small icon toolbar right
+             underneath it is every action that edits the photo -- kept
+             next to the thing it acts on instead of off in a separate
+             column by the title. -->
+        <div class="deepdive-cover-col">
+          <button type="button" class="deepdive-cover" id="deepdive-cover" aria-label="View photo full-size">
+            <img id="deepdive-cover-img" alt="" hidden />
+            <span id="deepdive-cover-emoji" class="deepdive-cover-emoji"></span>
+            <span class="deepdive-cover-zoom-hint" id="deepdive-cover-zoom-hint" hidden>🔍</span>
+          </button>
+          <div class="deepdive-cover-actions">
+            <label class="deepdive-cover-upload-label deepdive-cover-icon-btn" id="deepdive-cover-upload-label" title="Add photo"><span id="deepdive-cover-upload-label-text">📷</span><input type="file" id="deepdive-cover-file" accept="image/*" hidden /></label>
+            <button type="button" id="deepdive-cover-recrop" class="deepdive-cover-recrop deepdive-cover-icon-btn" title="Recrop" aria-label="Recrop photo" hidden>✂️</button>
+            <button type="button" id="deepdive-cover-remove" class="deepdive-cover-remove deepdive-cover-icon-btn" title="Remove photo" aria-label="Remove photo" hidden>🗑️</button>
+            <button type="button" id="deepdive-cover-emoji-btn" class="deepdive-cover-emoji-btn deepdive-cover-icon-btn" title="Choose emoji instead" aria-label="Choose emoji instead">🙂</button>
+          </div>
+        </div>
         <div class="deepdive-header-text">
           <div class="deepdive-eyebrow" id="deepdive-eyebrow"></div>
           <h2 id="deepdive-title"></h2>
           <div class="deepdive-meta" id="deepdive-meta"></div>
           <div class="deepdive-quick-facts" id="deepdive-quick-facts"></div>
-        </div>
-        <div class="deepdive-header-actions">
-          <div class="deepdive-cover-actions">
-            <label class="deepdive-cover-upload-label"><span id="deepdive-cover-upload-label-text">📷 Add photo</span><input type="file" id="deepdive-cover-file" accept="image/*" hidden /></label>
-            <button type="button" id="deepdive-cover-recrop" class="deepdive-cover-recrop" hidden>✂️ Recrop</button>
-            <button type="button" id="deepdive-cover-remove" class="deepdive-cover-remove" hidden>Remove photo</button>
-            <button type="button" id="deepdive-cover-emoji-btn" class="deepdive-cover-emoji-btn">Choose emoji instead</button>
-          </div>
-          <a class="deepdive-clickup-link" id="deepdive-clickup-link" href="#" target="_blank" rel="noopener" title="Open in ClickUp">Open in ClickUp ↗</a>
         </div>
       </div>
       <div class="deepdive-icon-picker" id="deepdive-icon-picker" hidden></div>
@@ -831,6 +862,75 @@
         <button type="button" id="crop-cancel" class="action-btn">Cancel</button>
         <button type="button" id="crop-save" class="action-btn action-btn-primary">Save photo</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Add Project -- opened from either the Tooling or Lab tab (see
+       data-add-project buttons above). One shared modal rather than two
+       near-duplicates, since the fields are identical either way; which tab
+       opened it only changes the confirmation copy. Everything asked here
+       mirrors a Deep Dive's five tabs (Scope/Timeline/Cost & Resource/
+       Impact/Priority), condensed onto one form -- see project-create.js
+       for how it's saved. -->
+  <div class="crop-overlay" id="add-project-overlay" hidden>
+    <div class="crop-panel add-project-panel" role="dialog" aria-modal="true" aria-labelledby="add-project-title">
+      <h3 id="add-project-title">Add a project</h3>
+      <p class="crop-hint" id="add-project-hint">Creates a real project on the Active portfolio list, not just a local note -- it'll show up everywhere else in the dashboard too, not only here.</p>
+      <form id="add-project-form">
+        <div class="form-grid">
+          <label class="form-field">
+            <span class="form-label">Project name <span class="required">*</span></span>
+            <input type="text" id="add-project-name" name="name" placeholder="e.g. Senegal Charcoal Stove v2" required />
+          </label>
+          <label class="form-field">
+            <span class="form-label">Product Category <span class="optional">(optional)</span></span>
+            <input type="text" id="add-project-category" name="productCategory" placeholder="e.g. Cookware" />
+          </label>
+          <label class="form-field">
+            <span class="form-label">Owner(s) <span class="optional">(optional)</span></span>
+            <input type="text" id="add-project-owners" name="owners" placeholder="Who's on this" />
+          </label>
+          <label class="form-field">
+            <span class="form-label">Stage Gate <span class="optional">(optional)</span></span>
+            <select id="add-project-gate" name="currentGate">
+              <option value="">Select…</option>
+            </select>
+          </label>
+          <label class="form-field">
+            <span class="form-label">Target gate date <span class="optional">(optional)</span></span>
+            <input type="date" id="add-project-target-date" name="targetGateDate" />
+          </label>
+          <label class="form-field form-field-checkbox">
+            <input type="checkbox" id="add-project-tooling" name="tooling" />
+            <span class="form-label">Needs tooling</span>
+          </label>
+        </div>
+        <label class="form-field form-field-wide">
+          <span class="form-label">Scope <span class="optional">(optional)</span></span>
+          <textarea id="add-project-scope" name="scope" rows="2" placeholder="What is this project, and why now?"></textarea>
+        </label>
+        <label class="form-field form-field-wide">
+          <span class="form-label">Timeline <span class="optional">(optional)</span></span>
+          <textarea id="add-project-timeline" name="timeline" rows="2" placeholder="Key phases and dates"></textarea>
+        </label>
+        <label class="form-field form-field-wide">
+          <span class="form-label">Cost &amp; Resource <span class="optional">(optional)</span></span>
+          <textarea id="add-project-cost-resource" name="costResource" rows="2" placeholder="Team, budget, hours/week"></textarea>
+        </label>
+        <label class="form-field form-field-wide">
+          <span class="form-label">Impact <span class="optional">(optional)</span></span>
+          <textarea id="add-project-impact" name="impact" rows="2" placeholder="Why this matters"></textarea>
+        </label>
+        <label class="form-field form-field-wide">
+          <span class="form-label">Priority <span class="optional">(optional)</span></span>
+          <textarea id="add-project-priority" name="priority" rows="2" placeholder="Priority call and open questions"></textarea>
+        </label>
+        <div class="form-actions">
+          <button type="button" id="add-project-cancel" class="action-btn">Cancel</button>
+          <button type="submit" id="add-project-submit-btn" class="action-btn action-btn-primary">Add project</button>
+          <span id="add-project-status" class="form-status"></span>
+        </div>
+      </form>
     </div>
   </div>
 

@@ -653,7 +653,14 @@ function toPortfolioSummary(tasks, opts = {}) {
 function flattenOpenTasks(nodes) {
   const out = [];
   (nodes || []).forEach((n) => {
-    if (n.statusType !== "done") {
+    // ClickUp's status TYPE is "open" | "custom" | "closed" | "done" --
+    // a custom status like "Complete" can carry type "closed" rather than
+    // literally "done" (see bucketHealth above, which already treats both
+    // the same way). Checking only "done" here let those tasks slip through
+    // as still-open, which is why "near-term (this week)" and the
+    // comprehensive timeline could show tasks that were actually finished
+    // months ago. "closed" means finished exactly like "done" does.
+    if (n.statusType !== "done" && n.statusType !== "closed") {
       // startDate/dueDate carried through (both epoch-ms or null, same shape
       // weekly.js's mapNode sets on every node) so callers can tell a task
       // scheduled into some week apart from one sitting in the backlog with
